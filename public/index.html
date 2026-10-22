@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git 提交比对</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="12" r="3"></circle>
+        <path d="M6 9v6M9 6h4a2 2 0 0 1 2 2v1M9 18h4a2 2 0 0 0 2-2v-1"></path>
+      </svg>
+      <span>Git 提交比对</span>
+    </div>
+
+    <div class="repo-open">
+      <input id="repoPath" type="text" spellcheck="false" placeholder="仓库路径，例如 D:\code\my-project" />
+      <button id="openRepo" class="btn primary">打开</button>
+    </div>
+
+    <div class="top-tools">
+      <label class="field">
+        <span class="field-label">分支</span>
+        <select id="refSelect"></select>
+      </label>
+      <input id="search" type="text" spellcheck="false" placeholder="搜索提交 / 作者 / hash" />
+      <button id="themeToggle" class="btn icon" title="切换主题"></button>
+    </div>
+  </header>
+
+  <div id="compareBar" class="compare-bar hidden">
+    <span id="compareText" class="compare-text">已选 0 个提交</span>
+    <button id="runCompare" class="btn primary small">比对</button>
+    <button id="clearCompare" class="btn ghost small">清除</button>
+  </div>
+
+  <main class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="repo-card" id="repoCard">
+        <div class="repo-empty">
+          <div class="repo-empty-icon">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            </svg>
+          </div>
+          <p>填入本地仓库路径后打开<br /><span>只读访问，不会修改任何文件</span></p>
+        </div>
+      </div>
+      <ul class="commit-list" id="commitList"></ul>
+      <div class="list-foot" id="listFoot"></div>
+    </aside>
+
+    <div class="resizer" id="resizer"></div>
+
+    <section class="detail" id="detail">
+      <div class="detail-empty" id="detailEmpty">
+        <h2>选择一个提交</h2>
+        <p>查看它改动了哪些文件、每一行的增删，也可以勾选两个提交做跨版本比对。</p>
+      </div>
+      <div class="detail-body hidden" id="detailBody">
+        <div class="commit-head" id="commitHead"></div>
+        <div class="diff-toolbar" id="diffToolbar"></div>
+        <div class="diff-scroll" id="diffScroll"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
