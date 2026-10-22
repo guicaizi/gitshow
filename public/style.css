@@ -22,6 +22,7 @@
   --mono: "Cascadia Mono", Consolas, "JetBrains Mono", "SF Mono", "Menlo", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --sidebar-w: 344px;
+  --filepane-w: 268px;
 }
 
 [data-theme="dark"] {
@@ -660,22 +661,354 @@ select { max-width: 190px; }
 
 .file-filter:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
-/* ---------- diff 主体 ---------- */
-.diff-scroll {
+/* ---------- diff 主体：左侧文件树 + 右侧 diff 双栏 ---------- */
+/* prize add by yanliang for 左树右 diff 双栏布局, 20261022-start */
+.diff-view {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.file-pane {
+  width: var(--filepane-w, 268px);
+  flex-shrink: 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sub);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.pane-head {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.pane-head-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pane-title {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  color: var(--text-2);
+}
+
+.pane-count {
+  margin-left: auto;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--text-3);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.pane-head .file-filter {
+  flex: 0 0 24px;
+  width: 100%;
+  min-width: 0;
+}
+
+.file-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 3px 0 10px;
+  scrollbar-width: thin;
+}
+
+.file-tree::-webkit-scrollbar { width: 10px; }
+.file-tree::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 3px solid var(--bg-sub);
+}
+
+.pane-resizer {
+  width: 4px;
+  margin-left: -2px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.pane-resizer:hover, .pane-resizer.dragging { background: var(--accent-soft); }
+
+.diff-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.diff-pane-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  background: var(--bg-sub);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.pane-file-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pane-file-path .old-path { color: var(--text-3); font-weight: 400; }
+.pane-file-path .arrow { margin: 0 6px; color: var(--text-3); font-weight: 400; }
+
+.diff-pane-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   background: var(--bg);
   scrollbar-width: thin;
 }
 
-.diff-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
-.diff-scroll::-webkit-scrollbar-thumb {
+.diff-pane-body::-webkit-scrollbar { width: 12px; height: 12px; }
+.diff-pane-body::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 7px;
   border: 3px solid var(--bg);
 }
 
-.diff-scroll::-webkit-scrollbar-corner { background: var(--bg); }
+.diff-pane-body::-webkit-scrollbar-corner { background: var(--bg); }
+
+.pane-empty {
+  margin: auto;
+  padding: 40px 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+/* prize add by yanliang for 左树右 diff 双栏布局, 20261022-end */
+
+/* 文件树在窄栏内的行样式：去掉整行边框，选中项高亮 */
+/* prize add by yanliang for 左侧文件树行样式与选中态, 20261022-start */
+.file-pane .dir-head {
+  background: transparent;
+  border-bottom: none;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-right: 8px;
+  gap: 6px;
+}
+
+.file-pane .file-block { border-bottom: none; }
+
+.file-pane .file-head {
+  position: static;
+  background: transparent;
+  border-bottom: none;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-right: 8px;
+  gap: 6px;
+}
+
+.file-pane .file-head:hover { background: var(--bg-hover); }
+
+.file-block.on > .file-head {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.file-block.on > .file-head:hover { background: var(--accent-soft); }
+
+.file-pane .file-status {
+  font-size: 9.5px;
+  height: 15px;
+  line-height: 15px;
+  padding: 0 3px;
+}
+
+.file-pane .file-name,
+.file-pane .dir-name { font-size: 11.5px; }
+
+.file-pane .dir-count {
+  height: 14px;
+  line-height: 14px;
+  min-width: 15px;
+  padding: 0 4px;
+  font-size: 9.5px;
+}
+
+/* 目录行的批量按钮改为悬浮覆盖，避免常驻占位把目录名挤成省略号 */
+.file-pane .dir-head { position: relative; }
+
+.file-pane .row-ops {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  gap: 3px;
+  padding-left: 8px;
+  background: var(--bg-hover);
+}
+
+.file-pane .dir-head:hover .dir-count { visibility: hidden; }
+
+.file-pane .row-op {
+  height: 17px;
+  padding: 0 5px;
+  font-size: 9.5px;
+  line-height: 15px;
+}
+
+/* 右侧面板头部是常驻区域，操作按钮不再需要 hover 才出现 */
+.diff-pane-head .row-ops {
+  opacity: 1;
+  margin-left: 4px;
+}
+
+.diff-pane-head .row-op { height: 21px; padding: 0 8px; font-size: 11px; line-height: 19px; }
+/* prize add by yanliang for 左侧文件树行样式与选中态, 20261022-end */
+
+/* ---------- 文件目录树 ---------- */
+/* prize add by yanliang for 新增文件目录树样式, 20261022-start */
+.tree-dir { display: block; }
+
+.dir-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dir-head:hover { background: var(--bg-hover); }
+
+.tree-dir.collapsed > .dir-head .caret { transform: rotate(-90deg); }
+
+.folder {
+  width: 13px;
+  height: 13px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  transition: color .1s;
+}
+
+.dir-head:hover .folder { color: var(--accent); }
+.dir-head:hover .caret { color: var(--text-2); }
+
+.dir-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dir-head:hover .dir-name { color: var(--text); }
+
+.dir-count {
+  flex-shrink: 0;
+  min-width: 16px;
+  height: 15px;
+  padding: 0 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  color: var(--text-3);
+  background: var(--bg-sub);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.dir-head:hover .dir-count { background: var(--bg); }
+/* prize add by yanliang for 新增文件目录树样式, 20261022-end */
+
+/* ---------- 行内 git 操作按钮 ---------- */
+/* prize add by yanliang for 文件/目录行的暂存、取消暂存、忽略按钮样式, 20261022-start */
+.row-ops {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity .12s;
+}
+
+.dir-head:hover .row-ops,
+.file-head:hover .row-ops,
+.dir-head:focus-within .row-ops,
+.file-head:focus-within .row-ops,
+.row-ops:focus-within {
+  opacity: 1;
+}
+
+/* 已进入暂存区的文件给一个常驻小圆点，避免「全部暂存」后看不出状态 */
+.staged-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: .7;
+  flex-shrink: 0;
+}
+
+.row-op {
+  height: 19px;
+  padding: 0 7px;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 17px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .1s, border-color .1s, background .1s;
+}
+
+.row-op:hover { color: var(--text); border-color: var(--text-3); }
+.row-op:active { background: var(--bg-active); }
+.row-op[data-op="stage"]:hover { color: var(--add-text); border-color: var(--add-text); }
+.row-op[data-op="unstage"]:hover { color: var(--accent); border-color: var(--accent); }
+.row-op[data-op="ignore"]:hover { color: var(--del-text); border-color: var(--del-text); }
+
+.bulk-ops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* prize add by yanliang for 文件/目录行的暂存、取消暂存、忽略按钮样式, 20261022-end */
 
 .file-block {
   border-bottom: 1px solid var(--border);
@@ -765,7 +1098,7 @@ select { max-width: 190px; }
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
   position: sticky;
-  top: 33px;
+  top: 0;
   z-index: 2;
 }
 
@@ -895,4 +1228,275 @@ td.code .marker {
   color: var(--text-3);
   font-size: 12px;
 }
+
+/* ---------- 仓库卡片上的提交入口 ---------- */
+/* prize add by yanliang for 提交入口与提交面板样式, 20261022-start */
+.repo-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.repo-actions .btn { flex: 0 0 auto; }
+
+/* ---------- 提交面板 ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  background: rgba(31, 35, 40, .42);
+}
+
+.modal-mask.hidden { display: none !important; }
+
+.commit-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 94vw);
+  height: auto;
+  max-height: min(700px, 88vh);
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 52px rgba(0, 0, 0, .3);
+}
+
+.modal-loading {
+  padding: 80px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 12px 0 14px;
+  background: var(--bg-sub);
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.modal-sub {
+  padding: 1px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+}
+
+.modal-close {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.modal-close:hover { color: var(--text); background: var(--bg-hover); }
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 暂存文件列表（单栏，去掉右侧改动预览） */
+.stg-list-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.stg-list-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--bg-sub);
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.stg-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.stg-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.stg-list {
+  flex: 1;
+  min-height: 0;
+  max-height: min(380px, 50vh);
+  padding: 4px 6px 10px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.stg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  scroll-margin: 4px;
+}
+
+.stg-row:hover { background: var(--bg-hover); }
+
+.stg-row input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.stg-path {
+  display: flex;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.stg-dir {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stg-base {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.stg-row.on .stg-path { color: var(--text-2); }
+.stg-row.on .stg-base { color: var(--text); font-weight: 550; }
+
+.stg-stat {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.stg-empty {
+  padding: 34px 18px;
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* 底部：amend + 提交说明 */
+.modal-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  background: var(--bg-sub);
+  border-top: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.stg-amend {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.stg-amend.disabled { cursor: not-allowed; color: var(--text-3); }
+.stg-amend input { margin: 0; accent-color: var(--accent); cursor: inherit; }
+
+.amend-tip { font-size: 11.5px; color: var(--text-3); }
+.amend-tip.warn { color: var(--del-text); }
+
+#commitMsg {
+  width: 100%;
+  height: 88px;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  resize: vertical;
+  transition: border-color .12s, box-shadow .12s;
+}
+
+#commitMsg:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-hint {
+  margin-right: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.modal-actions .btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.modal-actions .btn.primary:disabled { filter: none; }
+/* prize add by yanliang for 提交入口与提交面板样式, 20261022-end */
+
 /* prize add by yanliang for 新增界面样式, 20261022-end */

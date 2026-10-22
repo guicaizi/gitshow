@@ -47,7 +47,7 @@
               <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
             </svg>
           </div>
-          <p>填入本地仓库路径后打开<br /><span>只读访问，不会修改任何文件</span></p>
+          <p>填入本地仓库路径后打开<br /><span>历史只读；工作区可暂存 / 忽略 / 提交</span></p>
         </div>
       </div>
       <ul class="commit-list" id="commitList"></ul>
@@ -64,11 +64,18 @@
       <div class="detail-body hidden" id="detailBody">
         <div class="commit-head" id="commitHead"></div>
         <div class="diff-toolbar" id="diffToolbar"></div>
-        <div class="diff-scroll" id="diffScroll"></div>
+        <div class="diff-view" id="diffScroll"></div>
       </div>
     </section>
   </main>
 </div>
+
+<!-- prize add by yanliang for 提交面板容器, 20261022-start -->
+<div class="modal-mask hidden" id="commitMask">
+  <div class="commit-modal" id="commitModal" role="dialog" aria-modal="true" aria-label="提交暂存区的改动"></div>
+</div>
+<!-- prize add by yanliang for 提交面板容器, 20261022-end -->
+
 <script src="/app.js"></script>
 </body>
 </html>
