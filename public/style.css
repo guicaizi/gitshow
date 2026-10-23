@@ -255,15 +255,61 @@ select { max-width: 190px; }
   flex-shrink: 0;
 }
 
-.resizer {
+/* prize add by yanliang for 两条竖向分隔线加宽命中区并加悬停高亮，方便鼠标抓住, 20261023-start */
+.resizer,
+.pane-resizer {
+  position: relative;
+  z-index: 6;
   width: 4px;
   margin-left: -2px;
   cursor: col-resize;
   flex-shrink: 0;
-  z-index: 5;
 }
 
-.resizer:hover, .resizer.dragging { background: var(--accent-soft); }
+/* 实际命中区左右各外扩 4px，视觉上仍是一条细线；不加 position 时 z-index 无效，
+   右半边会被后面的面板盖住，只剩 2px 可点 */
+.resizer::before,
+.pane-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+  cursor: col-resize;
+}
+
+/* 悬停 / 拖动时的强调线 */
+.resizer::after,
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: transparent;
+  transition: background .12s;
+}
+
+.resizer:hover::before,
+.resizer.dragging::before,
+.pane-resizer:hover::before,
+.pane-resizer.dragging::before { background: var(--accent-soft); }
+
+.resizer:hover::after,
+.resizer.dragging::after,
+.pane-resizer:hover::after,
+.pane-resizer.dragging::after { background: var(--accent); }
+
+/* 拖动期间禁止选中文字、统一光标 */
+body.col-resizing {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* prize add by yanliang for 两条竖向分隔线加宽命中区并加悬停高亮，方便鼠标抓住, 20261023-end */
 
 /* ---------- 仓库卡片 ---------- */
 .repo-card { padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
@@ -746,18 +792,51 @@ select { max-width: 190px; }
   margin-left: -2px;
   cursor: col-resize;
   flex-shrink: 0;
-  z-index: 5;
 }
 
-.pane-resizer:hover, .pane-resizer.dragging { background: var(--accent-soft); }
-
 .diff-pane {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+
+/* prize add by yanliang for 并排视图中间的拖拽线，自由调整左右比例, 20261023-start */
+.split-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 11px;
+  margin-left: -5px;
+  z-index: 4;
+  display: none;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* 默认是一条淡线，悬停/拖动时变成强调色，方便发现也能抓得住 */
+.split-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -.5px;
+  background: var(--border);
+  transition: width .12s, margin-left .12s, background .12s;
+}
+
+.split-handle:hover::before,
+.split-handle.dragging::before {
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* prize add by yanliang for 并排视图中间的拖拽线，自由调整左右比例, 20261023-end */
 
 .diff-pane-head {
   flex-shrink: 0;
@@ -1112,7 +1191,9 @@ select { max-width: 190px; }
 
 .drow {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 46px minmax(0, 1fr);
+  /* prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start */
+  grid-template-columns: 46px minmax(0, var(--split-l, 1fr)) 46px minmax(0, var(--split-r, 1fr));
+  /* prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end */
   align-items: stretch;
   min-height: 19px;
   line-height: 19px;

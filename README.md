@@ -26,6 +26,33 @@ node server.js
 - 默认端口 7391，可用 `set PORT=8080 && node server.js` 修改。
 - git 不在 PATH 时，会自动尝试常见安装位置，也可用环境变量 `GIT_BIN` 指定。
 
+## 部署到 Linux 服务器（从 Windows 访问）
+
+服务器上只要 Node（≥14）和 git，无需 `npm install`，整目录拷过去即可。
+
+```bash
+# 目录拷到服务器后
+cd ~/tools/git-diff-viewer
+HOST=0.0.0.0 ./start.sh start      # 后台启动，日志写 server.log
+./start.sh status                  # 看是否在跑
+./start.sh stop                    # 停止
+HOST=0.0.0.0 ./start.sh            # 前台运行，Ctrl+C 停止
+```
+
+Windows 上直接浏览器打开：
+
+```
+http://192.168.1.202:7391/?repo=/home/yanliang/share/cursorProgect
+```
+
+- `HOST` 不设时仍只监听 `127.0.0.1`，只在服务器本机可用；`HOST=0.0.0.0` 才允许局域网访问。
+- 页面里填的仓库路径是**服务器上的绝对路径**（Linux 用 `/`，例如 `/home/yanliang/share/N06`）。
+- 开机自启（可选）：`crontab -e` 加一行 `@reboot cd $HOME/tools/git-diff-viewer && HOST=0.0.0.0 ./start.sh start`
+
+**安全**：这是个无登录的服务，谁能访问这个端口，谁就能看到仓库内容、还能对仓库做暂存/提交。只在可信内网用；
+不要映射到公网。服务器有防火墙时，只放行你自己的机器，例如
+`firewall-cmd --add-rich-rule='rule family=ipv4 source address=192.168.1.50 port port=7391 protocol=tcp accept'`。
+
 ## 能做什么
 
 **看单个提交**
@@ -33,6 +60,7 @@ node server.js
 - 分支、标签切换，从任意引用开始看历史
 - 每个文件显示增删行数与状态（新增 / 修改 / 删除 / 重命名）
 - 并排、内联两种 diff 视图，改动行做词级高亮
+- 并排视图左右两栏之间的中线可以拖动，自由调整左右代码区的显示比例（双击复位，比例会记住）
 - 文件筛选、单击文件头折叠、超长行自动换行、忽略空白变化
 
 **跨版本比对**
@@ -53,6 +81,8 @@ node server.js
 - 浅色 / 深色主题，记住上次打开的仓库
 - 键盘 `j` / `k` 或上下方向键切换提交
 - 点击短 hash 复制完整 hash
+- 提交列表与文件树之间、文件树与 diff 之间的竖线都能拖动调宽（双击复位），宽度会记住
+- 并排视图里 diff 中间那条竖线也能拖，左右两栏比例在 20%–80% 之间，双击回到 50/50
 
 ## 直接定位（可收藏）
 
@@ -72,4 +102,6 @@ server.js            本地服务：只读调用 git 并输出 JSON
 public/index.html    页面结构
 public/style.css     界面样式（双主题）
 public/app.js        diff 解析、视图渲染、交互
+start.bat            Windows 启动
+start.sh             Linux / macOS 启动（run | start | stop | status）
 ```

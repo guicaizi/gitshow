@@ -81,6 +81,9 @@ const state = {
   active: null,        // 当前打开的条目
   detail: null,
   view: localStorage.getItem('gdv.view') || 'split',
+  // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
+  splitRatio: Number(localStorage.getItem('gdv.splitRatio')) || 0.5,
+  // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
   wrap: localStorage.getItem('gdv.wrap') === '1',
   ignoreSpace: localStorage.getItem('gdv.ignoreSpace') === '1',
   theme: localStorage.getItem('gdv.theme') || 'light',
@@ -753,6 +756,9 @@ function renderSelectedFile() {
     ? `<span class="old-path">${esc(f.oldPath)}</span><span class="arrow">→</span>${esc(f.path)}`
     : esc(f.path);
 
+  // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
+  pane.classList.toggle('split-mode', state.view === 'split');
+  // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
   pane.innerHTML = `
     <div class="diff-pane-head" data-file="${esc(f.path)}">
       <span class="file-status st-${f.status}">${f.status}</span>
@@ -765,7 +771,12 @@ function renderSelectedFile() {
       </span>
       ${renderRowOps(ops, 'file')}
     </div>
-    <div class="diff-pane-body" id="diffPaneBody">${body}</div>`;
+    <div class="diff-pane-body" id="diffPaneBody">${body}</div>
+    <div class="split-handle" id="splitHandle" title="拖动调整左右比例，双击复位"></div>`;
+
+  // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
+  updateSplitHandle();
+  // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
 }
 
 // 点击左侧文件名：切换选中项并重绘右侧
@@ -778,6 +789,42 @@ function selectFile(path) {
   });
   renderSelectedFile();
 }
+
+// prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
+// 比例换算成 grid 的 fr 权重：0.5 即 1fr : 1fr
+function applySplitRatio() {
+  const r = Math.min(Math.max(state.splitRatio || 0.5, 0.2), 0.8);
+  document.documentElement.style.setProperty('--split-l', (r / 0.5).toFixed(3) + 'fr');
+  document.documentElement.style.setProperty('--split-r', ((1 - r) / 0.5).toFixed(3) + 'fr');
+}
+
+// 把中线贴到左右两栏的真实分界处；内联视图或没有可对比行时隐藏
+function updateSplitHandle() {
+  const pane = $('#diffPane');
+  const handle = $('#splitHandle');
+  const body = $('#diffPaneBody');
+  if (!pane || !handle || !body) return;
+
+  if (!pane.classList.contains('split-mode')) {
+    handle.style.display = 'none';
+    return;
+  }
+
+  const row = body.querySelector('.drow:not(.r-note)');
+  const gutter = row && (row.querySelector('.code.wrap-gutter') || row.children[1]);
+  if (!gutter) {
+    handle.style.display = 'none';
+    return;
+  }
+
+  const head = pane.querySelector('.diff-pane-head');
+  const pr = pane.getBoundingClientRect();
+  const gr = gutter.getBoundingClientRect();
+  handle.style.display = 'block';
+  handle.style.top = (head ? head.offsetHeight : 0) + 'px';
+  handle.style.left = gr.right - pr.left + 'px';
+}
+// prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
 // prize add by yanliang for 右侧面板渲染选中文件的 diff, 20261022-end
 
 // prize add by yanliang for 汇总每个目录与整棵树的批量操作目标, 20261022-start
@@ -875,7 +922,7 @@ function renderDiff() {
       </div>
       <div class="file-tree">${renderTreeNode(tree, 0)}</div>
     </aside>
-    <div class="pane-resizer" id="paneResizer" title="拖动调整宽度"></div>
+    <div class="pane-resizer" id="paneResizer" title="拖动调整文件栏宽度，双击复位"></div>
     <section class="diff-pane" id="diffPane"></section>`;
 
   renderSelectedFile();
@@ -1840,9 +1887,18 @@ function bindEvents() {
     if (!handle) return;
     paneDrag = true;
     handle.classList.add('dragging');
-    document.body.style.cursor = 'col-resize';
+    // prize add by yanliang for 拖动时统一光标并禁止选中文字, 20261023-start
+    document.body.classList.add('col-resizing');
+    // prize add by yanliang for 拖动时统一光标并禁止选中文字, 20261023-end
     e.preventDefault();
   });
+  // prize add by yanliang for 双击分隔线恢复默认宽度, 20261023-start
+  view.addEventListener('dblclick', (e) => {
+    if (!e.target.closest('#paneResizer')) return;
+    document.documentElement.style.removeProperty('--filepane-w');
+    localStorage.removeItem('gdv.filepane');
+  });
+  // prize add by yanliang for 双击分隔线恢复默认宽度, 20261023-end
   document.addEventListener('mousemove', (e) => {
     if (!paneDrag) return;
     const rect = view.getBoundingClientRect();
@@ -1850,14 +1906,69 @@ function bindEvents() {
     const w = Math.min(Math.max(e.clientX - rect.left, 180), Math.min(460, max));
     document.documentElement.style.setProperty('--filepane-w', w + 'px');
     localStorage.setItem('gdv.filepane', String(Math.round(w)));
+    // prize add by yanliang for 文件栏宽度变化后同步 diff 中线位置, 20261023-start
+    updateSplitHandle();
+    // prize add by yanliang for 文件栏宽度变化后同步 diff 中线位置, 20261023-end
   });
   document.addEventListener('mouseup', () => {
     if (!paneDrag) return;
     paneDrag = false;
     document.querySelectorAll('.pane-resizer.dragging').forEach((el) => el.classList.remove('dragging'));
-    document.body.style.cursor = '';
+    document.body.classList.remove('col-resizing');
   });
   // prize add by yanliang for 左侧文件栏宽度可拖拽调整, 20261022-end
+
+  // prize add by yanliang for 拖动 diff 中线自由调整左右栏比例, 20261023-start
+  let splitDrag = false;
+  let splitStartX = 0;
+  let splitStartRatio = 0.5;
+  let splitAvailW = 1;
+
+  view.addEventListener('mousedown', (e) => {
+    const handle = e.target.closest('#splitHandle');
+    if (!handle) return;
+    const body = $('#diffPaneBody');
+    const row = body && body.querySelector('.drow:not(.r-note)');
+    if (!row) return;
+    // 两栏合计可用宽度（减去左右两个行号列）
+    splitAvailW = row.getBoundingClientRect().width - 92;
+    if (splitAvailW < 120) return;
+    splitDrag = true;
+    splitStartX = e.clientX;
+    splitStartRatio = Math.min(Math.max(state.splitRatio || 0.5, 0.2), 0.8);
+    handle.classList.add('dragging');
+    document.body.classList.add('col-resizing');
+    e.preventDefault();
+  });
+
+  view.addEventListener('dblclick', (e) => {
+    if (!e.target.closest('#splitHandle')) return;
+    state.splitRatio = 0.5;
+    applySplitRatio();
+    updateSplitHandle();
+    localStorage.removeItem('gdv.splitRatio');
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!splitDrag) return;
+    const r = splitStartRatio + (e.clientX - splitStartX) / splitAvailW;
+    state.splitRatio = Math.min(Math.max(r, 0.2), 0.8);
+    applySplitRatio();
+    updateSplitHandle();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!splitDrag) return;
+    splitDrag = false;
+    document.querySelectorAll('#splitHandle.dragging').forEach((el) => el.classList.remove('dragging'));
+    document.body.classList.remove('col-resizing');
+    localStorage.setItem('gdv.splitRatio', String(Number((state.splitRatio || 0.5).toFixed(3))));
+  });
+
+  // 窗口尺寸变化后中线需要重新贴合分界处
+  window.addEventListener('resize', () => updateSplitHandle());
+  applySplitRatio();
+  // prize add by yanliang for 拖动 diff 中线自由调整左右栏比例, 20261023-end
 
   // prize add by yanliang for 提交面板事件：遮罩关闭、勾选、amend、Ctrl+Enter 提交, 20261022-start
   document.addEventListener('click', (e) => {
@@ -1921,20 +2032,31 @@ function bindEvents() {
   resizer.addEventListener('mousedown', (e) => {
     dragging = true;
     resizer.classList.add('dragging');
-    document.body.style.cursor = 'col-resize';
+    // prize add by yanliang for 拖动时统一光标并禁止选中文字, 20261023-start
+    document.body.classList.add('col-resizing');
+    // prize add by yanliang for 拖动时统一光标并禁止选中文字, 20261023-end
     e.preventDefault();
   });
+  // prize add by yanliang for 双击分隔线恢复默认宽度, 20261023-start
+  resizer.addEventListener('dblclick', () => {
+    document.documentElement.style.removeProperty('--sidebar-w');
+    localStorage.removeItem('gdv.sidebar');
+  });
+  // prize add by yanliang for 双击分隔线恢复默认宽度, 20261023-end
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
     const w = Math.min(Math.max(e.clientX, 240), 620);
     document.documentElement.style.setProperty('--sidebar-w', w + 'px');
     localStorage.setItem('gdv.sidebar', String(w));
+    // prize add by yanliang for 侧栏宽度变化后同步 diff 中线位置, 20261023-start
+    updateSplitHandle();
+    // prize add by yanliang for 侧栏宽度变化后同步 diff 中线位置, 20261023-end
   });
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
     resizer.classList.remove('dragging');
-    document.body.style.cursor = '';
+    document.body.classList.remove('col-resizing');
   });
 }
 
@@ -1960,6 +2082,16 @@ async function init() {
   bindEvents();
   state.filter = '';
   renderCompareBar();
+
+  // prize add by yanliang for 部署在 Linux 服务器时把路径提示换成服务器路径样式, 20261022-start
+  try {
+    const ping = await api('ping', {});
+    const box = $('#repoPath');
+    if (box && ping && ping.platform && ping.platform !== 'win32') {
+      box.placeholder = `仓库路径，例如 ${ping.home || '/home/me'}/share/my-project`;
+    }
+  } catch (e) {}
+  // prize add by yanliang for 部署在 Linux 服务器时把路径提示换成服务器路径样式, 20261022-end
 
   // 支持 http://127.0.0.1:7391/?repo=D:\code\xxx&commit=abc1234 直接定位
   const paramRepo = params.get('repo');

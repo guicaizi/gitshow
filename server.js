@@ -42,6 +42,9 @@ function probeGit() {
 // prize add by yanliang for 新增 git 可执行文件探测, 20261022-end
 
 const PORT = Number(process.env.PORT || 7391);
+// prize add by yanliang for 支持部署到服务器后局域网访问（HOST=0.0.0.0）, 20261022-start
+const HOST = process.env.HOST || '127.0.0.1';
+// prize add by yanliang for 支持部署到服务器后局域网访问（HOST=0.0.0.0）, 20261022-end
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -775,7 +778,9 @@ async function handleApi(req, res, urlObj) {
 
   try {
     if (action === 'ping') {
-      return sendJson(res, 200, { ok: true, git: GIT_BIN });
+      // prize add by yanliang for 返回平台信息，前端据此调整路径输入提示, 20261022-start
+      return sendJson(res, 200, { ok: true, git: GIT_BIN, platform: process.platform, home: os.homedir() });
+      // prize add by yanliang for 返回平台信息，前端据此调整路径输入提示, 20261022-end
     }
 
     const repo = await resolveRepo(q.get('repo'));
@@ -844,8 +849,18 @@ probeGit().then((bin) => {
     process.exit(1);
   }
   GIT_BIN = bin;
-  server.listen(PORT, '127.0.0.1', () => {
+  server.listen(PORT, HOST, () => {
     console.log(`Git 提交比对工具已启动：http://127.0.0.1:${PORT}`);
+    // prize add by yanliang for 监听 0.0.0.0 时打印局域网可访问地址, 20261022-start
+    if (HOST === '0.0.0.0' || HOST === '::') {
+      const nets = os.networkInterfaces();
+      for (const name of Object.keys(nets)) {
+        for (const n of nets[name] || []) {
+          if (n.family === 'IPv4' && !n.internal) console.log(`局域网访问：http://${n.address}:${PORT}`);
+        }
+      }
+    }
+    // prize add by yanliang for 监听 0.0.0.0 时打印局域网可访问地址, 20261022-end
     console.log(`使用 git：${GIT_BIN}`);
   });
 });
