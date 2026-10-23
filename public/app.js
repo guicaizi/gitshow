@@ -95,6 +95,10 @@ const state = {
   // prize add by yanliang for 记住被折叠的目录, 20261022-start
   collapsedDirs: new Set(),
   // prize add by yanliang for 记住被折叠的目录, 20261022-end
+  // prize add by yanliang for markdown 在线预览：是否用渲染视图代替源码 diff, 20261023-start
+  mdPreview: localStorage.getItem('gdv.mdPreview') === '1',
+  mdToken: 0,
+  // prize add by yanliang for markdown 在线预览：是否用渲染视图代替源码 diff, 20261023-end
   filter: '',
   // prize add by yanliang for 提交面板状态：暂存区数据、勾选集合、amend 与提交说明, 20261022-start
   commitOpen: false,
@@ -741,6 +745,251 @@ function diffBodyHtml(f) {
 }
 // prize add by yanliang for 抽出文件正文渲染，提交面板的暂存预览也复用, 20261022-end
 
+// prize add by yanliang for markdown 在线预览：轻量渲染器（零依赖，先转义再套语法）, 20261023-start
+const MD_RE = /\.(md|markdown|mdx)$/i;
+
+function isMarkdown(p) {
+  return MD_RE.test(String(p || '').split('?')[0].split('#')[0]);
+}
+
+// 当前预览的文件上下文，图片等相对路径要靠它换算
+let mdCtx = { file: '', rev: '' };
+
+function mdDir(p) {
+  const i = p.lastIndexOf('/');
+  return i < 0 ? '' : p.slice(0, i + 1);
+}
+
+function mdJoin(baseDir, rel) {
+  const out = [];
+  for (const seg of (baseDir + rel).split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  return out.join('/');
+}
+
+// 仓库内相对资源（图片/附件）-> /api/raw，否则浏览器按页面地址会 404
+function mdAssetUrl(src) {
+  const s = String(src || '').trim();
+  if (!s || /^(https?:|data:|blob:|\/|#)/i.test(s)) return s;
+  let decoded = s;
+  try {
+    decoded = decodeURI(s);
+  } catch (_) {}
+  const rel = mdJoin(mdDir(mdCtx.file), decoded);
+  const qs = new URLSearchParams({ repo: state.repo, path: rel });
+  if (mdCtx.rev) qs.set('rev', mdCtx.rev);
+  return `/api/raw?${qs.toString()}`;
+}
+
+// 行内语法；入参必须是已经 esc 过的纯文本，code 内的标记用占位符保护
+function mdInline(text) {
+  const codes = [];
+  let s = String(text).replace(/`([^`\n]+)`/g, (_m, c) => {
+    codes.push(c);
+    return `\u0001${codes.length - 1}\u0001`;
+  });
+
+  s = s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)/g, (_m, alt, src) => {
+    return `<img src="${mdAssetUrl(src)}" alt="${alt}" loading="lazy">`;
+  });
+  s = s.replace(/\[([^\]]+)\]\(\s*([^)\s]+)[^)]*\)/g, (_m, txt, href) => {
+    if (href.startsWith('#')) return `<a href="${href}">${txt}</a>`;
+    const external = /^[a-z][a-z0-9+.-]*:/i.test(href);
+    const url = external ? href : mdAssetUrl(href);
+    return `<a href="${url}"${external || url.startsWith('/api/raw') ? ' target="_blank" rel="noopener"' : ''}>${txt}</a>`;
+  });
+
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/(^|[^_\w])_([^_\n]+)_/g, '$1<em>$2</em>');
+  s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+
+  return s.replace(/\u0001(\d+)\u0001/g, (_m, i) => `<code>${codes[Number(i)] || ''}</code>`);
+}
+
+function mdCells(line) {
+  let s = String(line).trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|');
+}
+
+// 列表按缩进还原嵌套，level 为缩进层级（2 空格一级）
+function mdList(items) {
+  let html = '';
+  const stack = [];
+  for (const it of items) {
+    const tag = it.ordered ? 'ol' : 'ul';
+    while (stack.length && stack[stack.length - 1].level > it.level) html += `</li></${stack.pop().tag}>`;
+    if (!stack.length || stack[stack.length - 1].level < it.level) {
+      html += `<${tag}>`;
+      stack.push({ tag, level: it.level });
+    } else if (stack[stack.length - 1].tag !== tag) {
+      html += `</li></${stack.pop().tag}><${tag}>`;
+      stack.push({ tag, level: it.level });
+    } else {
+      html += '</li>';
+    }
+    let t = esc(it.text);
+    const task = t.match(/^\[([ xX])\]\s+([\s\S]*)$/);
+    if (task) t = `<span class="md-task${/[xX]/.test(task[1]) ? ' on' : ''}"></span>` + task[2];
+    // 这里先不闭合 li：更深的子列表要嵌在当前 li 里，闭合交给下一个 item 或收尾
+    html += `<li>${mdInline(t)}`;
+  }
+  while (stack.length) html += `</li></${stack.pop().tag}>`;
+  return html;
+}
+
+// 返回 HTML 字符串；文档里的标签一律 esc，不执行
+function markdownToHtml(src) {
+  const lines = String(src || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  const blockStart = (t) =>
+    /^\s{0,3}(#{1,6}\s|```|~~~|>|\s*[-*+]\s|\s*\d+[.)]\s)/.test(t) ||
+    /^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(t);
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 围栏代码块：内部不再解析任何语法
+    const fence = line.match(/^\s{0,3}(`{3,}|~{3,})\s*(.*)$/);
+    if (fence) {
+      const mark = fence[1];
+      const lang = fence[2].trim().replace(/^\{?\.?/, '').replace(/\}?$/, '');
+      const body = [];
+      i++;
+      const closeRe = new RegExp('^\\s{0,3}' + mark[0] + '{' + mark.length + ',}\\s*$');
+      while (i < lines.length && !closeRe.test(lines[i])) body.push(lines[i++]);
+      i++;
+      out.push(
+        `<pre class="md-code"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.join('\n'))}</code></pre>`
+      );
+      continue;
+    }
+
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      out.push('<hr>');
+      i++;
+      continue;
+    }
+
+    const h = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (h) {
+      const lv = h[1].length;
+      out.push(`<h${lv}>${mdInline(esc(h[2]))}</h${lv}>`);
+      i++;
+      continue;
+    }
+
+    if (/^\s{0,3}>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s{0,3}>/.test(lines[i])) buf.push(lines[i++].replace(/^\s{0,3}>\s?/, ''));
+      out.push(`<blockquote>${markdownToHtml(buf.join('\n'))}</blockquote>`);
+      continue;
+    }
+
+    // 表格：本行含 | 且下一行是 --- 分隔行
+    if (
+      line.includes('|') &&
+      i + 1 < lines.length &&
+      lines[i + 1].includes('-') &&
+      /^\s*\|?[\s:|-]+$/.test(lines[i + 1])
+    ) {
+      const head = mdCells(line);
+      const aligns = mdCells(lines[i + 1]).map((c) => {
+        const t = c.trim();
+        if (/^:-+:$/.test(t)) return 'center';
+        if (/^-+:$/.test(t)) return 'right';
+        return '';
+      });
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(mdCells(lines[i++]));
+      const cell = (tag, val, k) => {
+        const al = aligns[k] ? ` class="ta-${aligns[k]}"` : '';
+        return `<${tag}${al}>${mdInline(esc(String(val == null ? '' : val).trim()))}</${tag}>`;
+      };
+      out.push(
+        '<div class="md-table-wrap"><table><thead><tr>' +
+          head.map((c, k) => cell('th', c, k)).join('') +
+          '</tr></thead><tbody>' +
+          rows.map((r) => '<tr>' + head.map((_c, k) => cell('td', r[k], k)).join('') + '</tr>').join('') +
+          '</tbody></table></div>'
+      );
+      continue;
+    }
+
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
+        const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        items.push({
+          level: Math.min(Math.floor(m[1].replace(/\t/g, '  ').length / 2), 5),
+          ordered: /\d/.test(m[2]),
+          text: m[3],
+        });
+        i++;
+      }
+      out.push(mdList(items));
+      continue;
+    }
+
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !blockStart(lines[i])) para.push(lines[i++].trim());
+    if (!para.length) {
+      i++;
+      continue;
+    }
+    out.push(`<p>${mdInline(esc(para.join('\n'))).replace(/\n/g, '<br>')}</p>`);
+  }
+  return out.join('\n');
+}
+
+// 预览取哪个版本：提交详情看该提交，对比看目标版本，工作区直接读磁盘
+function previewRev() {
+  const d = state.detail;
+  if (!d) return 'worktree';
+  if (d.kind === 'commit') return d.hash || 'worktree';
+  if (d.kind === 'compare') return d.head || 'worktree';
+  return 'worktree';
+}
+
+async function renderMdPreview(path) {
+  const body = $('#diffPaneBody');
+  if (!body) return;
+  const token = ++state.mdToken;
+  try {
+    const data = await api('file', { path, rev: previewRev() });
+    if (token !== state.mdToken) return;
+    if (data.binary) {
+      body.innerHTML = '<div class="binary-note">这是二进制文件，没法预览</div>';
+      return;
+    }
+    if (data.tooLarge) {
+      body.innerHTML = '<div class="empty-note">文件超过 2MB，切到「源码」看改动更合适</div>';
+      return;
+    }
+    mdCtx = { file: data.path, rev: data.rev === 'worktree' ? '' : data.rev };
+    body.innerHTML = `<article class="md-view">${markdownToHtml(data.content)}</article>`;
+    body.scrollTop = 0;
+  } catch (err) {
+    if (token !== state.mdToken) return;
+    body.innerHTML = `<div class="empty-note">预览失败：${esc(err.message)}</div>`;
+  }
+}
+// prize add by yanliang for markdown 在线预览：轻量渲染器（零依赖，先转义再套语法）, 20261023-end
+
 function renderSelectedFile() {
   const pane = $('#diffPane');
   if (!pane) return;
@@ -751,7 +1000,16 @@ function renderSelectedFile() {
     return;
   }
 
-  const body = diffBodyHtml(f);
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-start
+  const md = isMarkdown(f.path);
+  const mdMode = md && state.mdPreview;
+  const body = mdMode ? '<div class="md-loading">加载文档…</div>' : diffBodyHtml(f);
+  const mdBtn = md
+    ? `<button class="btn tiny md-toggle${mdMode ? ' on' : ''}" id="mdToggle" title="${
+        mdMode ? '显示这个文件的逐行改动' : '把文档渲染成排版后的样子'
+      }">${mdMode ? '源码' : '预览'}</button>`
+    : '';
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-end
 
   const ops = f.live
     ? { stage: !!(f.untracked || f.dirty), unstage: !!f.staged, ignore: !!f.untracked }
@@ -762,13 +1020,14 @@ function renderSelectedFile() {
     : esc(f.path);
 
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
-  pane.classList.toggle('split-mode', state.view === 'split');
+  pane.classList.toggle('split-mode', state.view === 'split' && !mdMode);
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
   pane.innerHTML = `
     <div class="diff-pane-head" data-file="${esc(f.path)}">
       <span class="file-status st-${f.status}">${f.status}</span>
       ${f.staged ? '<span class="staged-dot" title="已在暂存区"></span>' : ''}
       <span class="pane-file-path" title="${esc(f.path)}">${pathHtml}</span>
+      ${mdBtn}
       <span class="file-stat">
         ${renderStatBars(f.additions, f.deletions)}
         <span class="stat-add">+${f.additions}</span>
@@ -776,12 +1035,18 @@ function renderSelectedFile() {
       </span>
       ${renderRowOps(ops, 'file')}
     </div>
-    <div class="diff-pane-body" id="diffPaneBody">${body}</div>
+    <div class="diff-pane-body${mdMode ? ' md-body' : ''}" id="diffPaneBody">${body}</div>
     <div class="split-handle" id="splitHandle" title="拖动调整左右比例，双击复位"></div>`;
+
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-start
+  if (mdMode) renderMdPreview(f.path);
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-end
 
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
   updateSplitHandle();
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
+  // 预览模式下工具条要收起源码相关开关
+  renderToolbar();
 }
 
 // 点击左侧文件名：切换选中项并重绘右侧
@@ -944,13 +1209,20 @@ function renderToolbar() {
   const add = scroll.dataset.add || '0';
   const del = scroll.dataset.del || '0';
 
-  $('#diffToolbar').innerHTML = `
-    <div class="seg" id="viewSeg">
+  // prize add by yanliang for 预览模式下收起源码视图相关开关, 20261023-start
+  const mdMode = state.mdPreview && isMarkdown(state.selected);
+  const sourceOps = mdMode
+    ? '<span class="md-hint">Markdown 预览</span>'
+    : `<div class="seg" id="viewSeg">
       <button data-view="split" class="${state.view === 'split' ? 'on' : ''}">并排</button>
       <button data-view="inline" class="${state.view === 'inline' ? 'on' : ''}">内联</button>
     </div>
     <button class="btn small ${state.ignoreSpace ? 'active' : ''}" id="ignoreSpace" title="忽略空格与缩进变化">忽略空白</button>
-    <button class="btn small ${state.wrap ? 'active' : ''}" id="wrapToggle" title="超长代码行自动折行">自动换行</button>
+    <button class="btn small ${state.wrap ? 'active' : ''}" id="wrapToggle" title="超长代码行自动折行">自动换行</button>`;
+  // prize add by yanliang for 预览模式下收起源码视图相关开关, 20261023-end
+
+  $('#diffToolbar').innerHTML = `
+    ${sourceOps}
     <div class="toolbar-spacer"></div>
     ${
       // prize add by yanliang for 工作区视图提供整棵树的一键暂存/取消暂存, 20261022-start
@@ -2143,6 +2415,14 @@ function bindEvents() {
 
   // prize add by yanliang for 提交面板事件：遮罩关闭、勾选、amend、Ctrl+Enter 提交, 20261022-start
   document.addEventListener('click', (e) => {
+    // prize add by yanliang for markdown 预览/源码切换（记住偏好）, 20261023-start
+    if (e.target.closest('#mdToggle')) {
+      state.mdPreview = !state.mdPreview;
+      localStorage.setItem('gdv.mdPreview', state.mdPreview ? '1' : '0');
+      renderSelectedFile();
+      return;
+    }
+    // prize add by yanliang for markdown 预览/源码切换（记住偏好）, 20261023-end
     if (e.target.closest('[data-open-commit]')) {
       e.preventDefault();
       openCommitPanel();

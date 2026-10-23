@@ -482,6 +482,119 @@ function safeRelPath(raw) {
   return p.replace(/\/+$/, '');
 }
 
+// prize add by yanliang for 读取单个文件内容，供 markdown / 图片在线预览, 20261023-start
+const PREVIEW_TEXT_MAX = 2 * 1024 * 1024;
+const PREVIEW_RAW_MAX = 12 * 1024 * 1024;
+
+const MIME_BY_EXT = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+};
+
+function mimeOf(rel) {
+  return MIME_BY_EXT[path.extname(rel).toLowerCase()] || 'application/octet-stream';
+}
+
+// 版本号白名单：避免 -x 之类被 git 当成选项
+function safeRev(raw) {
+  const r = String(raw == null ? '' : raw).trim();
+  if (!r || r === 'worktree') return '';
+  if (!/^[0-9A-Za-z][0-9A-Za-z._/^~-]*$/.test(r)) throw new Error('非法的版本号：' + r);
+  return r;
+}
+
+// 工作区文件绝对路径，必须落在仓库目录内
+function worktreeFile(repo, rel) {
+  const root = path.resolve(repo);
+  const abs = path.resolve(root, rel);
+  const lowerAbs = abs.toLowerCase();
+  const lowerRoot = root.toLowerCase();
+  if (lowerAbs !== lowerRoot && !lowerAbs.startsWith(lowerRoot + path.sep)) {
+    throw new Error('路径越界：' + rel);
+  }
+  return abs;
+}
+
+// 和 git() 一样，但保留二进制（图片预览要用）
+function gitBuf(args, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      GIT_BIN,
+      ['-c', 'core.quotepath=false', ...args],
+      {
+        cwd,
+        maxBuffer: MAX_BUFFER,
+        windowsHide: true,
+        encoding: 'buffer',
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_PAGER: 'cat',
+          GIT_OPTIONAL_LOCKS: '0',
+          LC_ALL: 'C',
+        },
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          const msg = Buffer.isBuffer(stderr) ? stderr.toString('utf8') : String(stderr || err.message);
+          return reject(new Error(msg.trim() || 'git 执行失败'));
+        }
+        resolve(stdout);
+      }
+    );
+  });
+}
+
+// 取文件二进制：rev 为空读工作区，否则读该提交里的版本
+async function readBlob(repo, rawPath, rawRev) {
+  const rel = safeRelPath(rawPath);
+  if (rel.split('/')[0] === '.git') throw new Error('不预览 .git 目录里的文件');
+  const rev = safeRev(rawRev);
+
+  if (rev) {
+    let size = 0;
+    try {
+      size = Number(String(await git(['cat-file', '-s', `${rev}:${rel}`], repo)).trim() || 0);
+    } catch (_) {
+      throw new Error(`这个版本里没有该文件：${rel}`);
+    }
+    if (size > PREVIEW_RAW_MAX) throw new Error(`文件太大，不预览（${(size / 1024 / 1024).toFixed(1)}MB）`);
+    return { rel, rev, size, buf: await gitBuf(['show', `${rev}:${rel}`], repo) };
+  }
+
+  const abs = worktreeFile(repo, rel);
+  let st = null;
+  try {
+    st = fs.statSync(abs);
+  } catch (_) {
+    throw new Error(`文件不存在（可能已被删除）：${rel}`);
+  }
+  if (!st.isFile()) throw new Error(`这不是普通文件：${rel}`);
+  if (st.size > PREVIEW_RAW_MAX) throw new Error(`文件太大，不预览（${(st.size / 1024 / 1024).toFixed(1)}MB）`);
+  return { rel, rev: 'worktree', size: st.size, buf: fs.readFileSync(abs) };
+}
+
+async function readFileText(repo, rawPath, rawRev) {
+  const { rel, rev, size, buf } = await readBlob(repo, rawPath, rawRev);
+  const binary = buf.includes(0);
+  const tooLarge = size > PREVIEW_TEXT_MAX;
+  return {
+    path: rel,
+    rev,
+    size,
+    binary,
+    tooLarge,
+    content: binary || tooLarge ? '' : buf.toString('utf8'),
+  };
+}
+// prize add by yanliang for 读取单个文件内容，供 markdown / 图片在线预览, 20261023-end
+
 function escapeIgnorePattern(p) {
   return p
     .replace(/[\\*?[\]]/g, (m) => `\\${m}`)
@@ -897,6 +1010,20 @@ async function handleApi(req, res, urlObj) {
     if (action === 'working') {
       return sendJson(res, 200, await readWorkingTree(repo, ignoreSpace));
     }
+    // prize add by yanliang for 单文件内容接口：markdown 预览与图片资源, 20261023-start
+    if (action === 'file') {
+      return sendJson(res, 200, await readFileText(repo, q.get('path'), q.get('rev')));
+    }
+    if (action === 'raw') {
+      const { rel, buf } = await readBlob(repo, q.get('path'), q.get('rev'));
+      res.writeHead(200, {
+        'Content-Type': mimeOf(rel),
+        'Content-Length': buf.length,
+        'Cache-Control': 'no-store',
+      });
+      return res.end(buf);
+    }
+    // prize add by yanliang for 单文件内容接口：markdown 预览与图片资源, 20261023-end
     // prize add by yanliang for 工作区写操作接口（POST，路径在 JSON 体内）, 20261022-start
     if (action === 'git-op') {
       if (req.method !== 'POST') throw new Error('该接口只接受 POST');

@@ -1745,3 +1745,184 @@ td.code .marker {
   white-space: nowrap;
 }
 /* prize add by yanliang for 目录选择面板样式, 20261023-end */
+
+/* prize add by yanliang for markdown 在线预览样式, 20261023-start */
+.btn.tiny {
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.md-toggle { margin-left: 2px; font-family: var(--sans); }
+
+.md-toggle.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.md-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  letter-spacing: .2px;
+}
+
+.md-loading {
+  padding: 44px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.md-view {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 26px 32px 88px;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text);
+  word-wrap: break-word;
+}
+
+.md-view > *:first-child { margin-top: 0; }
+
+.md-view h1,
+.md-view h2,
+.md-view h3,
+.md-view h4,
+.md-view h5,
+.md-view h6 {
+  margin: 1.5em 0 .6em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.md-view h1 { font-size: 24px; padding-bottom: .3em; border-bottom: 1px solid var(--border-soft); }
+.md-view h2 { font-size: 19px; padding-bottom: .25em; border-bottom: 1px solid var(--border-soft); }
+.md-view h3 { font-size: 16px; }
+.md-view h4 { font-size: 14px; }
+.md-view h5,
+.md-view h6 { font-size: 13px; color: var(--text-2); }
+
+.md-view p { margin: .75em 0; }
+.md-view a { color: var(--accent); text-decoration: none; }
+.md-view a:hover { text-decoration: underline; }
+
+.md-view ul,
+.md-view ol { margin: .6em 0; padding-left: 1.7em; }
+.md-view li { margin: .25em 0; }
+.md-view li > ul,
+.md-view li > ol { margin: .2em 0; }
+
+.md-view code {
+  padding: .15em .4em;
+  font-family: var(--mono);
+  font-size: .88em;
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.md-view .md-code {
+  margin: .9em 0;
+  padding: 12px 14px;
+  overflow: auto;
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: var(--bg-sub);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.md-view .md-code code {
+  padding: 0;
+  font-size: 12.5px;
+  background: none;
+  border-radius: 0;
+  white-space: pre;
+}
+
+.md-view blockquote {
+  margin: .9em 0;
+  padding: .2em 0 .2em 14px;
+  color: var(--text-2);
+  border-left: 3px solid var(--border);
+}
+
+.md-view blockquote p:first-child { margin-top: 0; }
+.md-view blockquote p:last-child { margin-bottom: 0; }
+
+.md-view hr {
+  height: 1px;
+  margin: 1.6em 0;
+  background: var(--border-soft);
+  border: 0;
+}
+
+.md-table-wrap { margin: 1em 0; overflow: auto; }
+
+.md-view table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.md-view th,
+.md-view td {
+  padding: 6px 11px;
+  text-align: left;
+  vertical-align: top;
+  border: 1px solid var(--border-soft);
+}
+
+.md-view th {
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--bg-sub);
+}
+
+.md-view tbody tr:nth-child(2n) td { background: var(--bg-sub); }
+.md-view .ta-center { text-align: center; }
+.md-view .ta-right { text-align: right; }
+
+.md-view img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.md-view strong { font-weight: 600; }
+.md-view del { color: var(--text-3); }
+
+.md-task {
+  position: relative;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+}
+
+.md-task.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.md-task.on::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(42deg);
+}
+/* prize add by yanliang for markdown 在线预览样式, 20261023-end */
