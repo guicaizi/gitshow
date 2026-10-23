@@ -104,6 +104,11 @@ const state = {
   commitMsg: '',
   commitBusy: false,
   // prize add by yanliang for 提交面板状态：暂存区数据、勾选集合、amend 与提交说明, 20261022-end
+  // prize add by yanliang for 目录选择器状态：当前目录数据与高亮项, 20261023-start
+  finderOpen: false,
+  finderData: null,
+  finderSel: '',
+  // prize add by yanliang for 目录选择器状态：当前目录数据与高亮项, 20261023-end
 };
 
 const MAX_COMPARE = 2;
@@ -1190,11 +1195,29 @@ async function loadCommits(reset) {
   }
 }
 
-async function openRepo(path) {
+// prize add by yanliang for 换仓库后同步地址栏，避免刷新时 URL 参数把刚选的仓库覆盖回去, 20261023-start
+function syncRepoUrl(repo) {
+  try {
+    const url = new URL(location.href);
+    if (repo) url.searchParams.set('repo', repo);
+    else url.searchParams.delete('repo');
+    // 换了仓库，之前那个仓库的定位参数（提交 / 对比 / 工作区）已经没有意义
+    ['commit', 'cmp', 'working'].forEach((k) => url.searchParams.delete(k));
+    // 默认会把路径里的 / 编码成 %2F，这里还原成可读形式
+    const search = url.searchParams.toString().replace(/%2F/g, '/');
+    history.replaceState(null, '', url.pathname + (search ? '?' + search : '') + url.hash);
+  } catch (e) {}
+}
+// prize add by yanliang for 换仓库后同步地址栏，避免刷新时 URL 参数把刚选的仓库覆盖回去, 20261023-end
+
+async function openRepo(path, opts) {
   if (!path.trim()) {
     toast('请先填写仓库路径', true);
-    return;
+    return false;
   }
+  const syncUrl = !opts || opts.syncUrl !== false;
+  // 打开失败时要把 state.repo 还原，否则后续请求会打到不存在的仓库
+  const prevRepo = state.repo;
   try {
     state.repo = path.trim();
     const info = await fetch(`/api/repo?repo=${encodeURIComponent(state.repo)}`).then(async (r) => {
@@ -1206,6 +1229,9 @@ async function openRepo(path) {
     state.repo = info.repo;
     state.info = info;
     localStorage.setItem('gdv.repo', state.repo);
+    // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-start
+    if (syncUrl) syncRepoUrl(state.repo);
+    // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-end
     $('#repoPath').value = state.repo;
 
     const refSelect = $('#refSelect');
@@ -1228,12 +1254,157 @@ async function openRepo(path) {
     showEmpty('选择一个提交', '查看它改动了哪些文件、每一行的增删，也可以勾选两个提交做跨版本比对。');
 
     await loadCommits(true);
+    return true;
   } catch (err) {
-    state.info = null;
-    renderRepoCard();
+    state.repo = prevRepo;
+    // 之前已经打开过仓库时保留原视图，只提示错误；首次打开失败则回空态
+    if (!state.info) renderRepoCard();
     toast(err.message, true);
+    return false;
   }
 }
+
+// prize add by yanliang for 目录选择器：从磁盘挑一个仓库并记住, 20261023-start
+const FOLDER_ICON =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h7A1.5 1.5 0 0 1 19 9.5v8A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"></path></svg>';
+const REPO_ICON =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="6" cy="18" r="2.4"></circle><circle cx="18" cy="12" r="2.4"></circle><path d="M6 8.4v7.2M8.4 6h4.1a3 3 0 0 1 3 3v.9M8.4 18h4.1a3 3 0 0 0 3-3v-.9"></path></svg>';
+
+function finderShell() {
+  return `
+    <div class="modal-head">
+      <span class="modal-title">选择仓库目录</span>
+      <button class="modal-close" data-finder-close title="关闭">&times;</button>
+    </div>
+    <div class="finder-nav">
+      <button class="btn small" id="finderUp" title="上一级目录">上一级</button>
+      <button class="btn small" id="finderHome" title="回到用户主目录">主目录</button>
+      <input class="finder-path" id="finderPath" spellcheck="false" placeholder="直接输入路径后回车" />
+    </div>
+    <div class="finder-list" id="finderList"></div>
+    <div class="finder-foot">
+      <span class="finder-hint" id="finderHint"></span>
+      <button class="btn" data-finder-close>取消</button>
+      <button class="btn" id="finderPick">选择此目录</button>
+    </div>`;
+}
+
+function openFinder() {
+  state.finderOpen = true;
+  state.finderSel = '';
+  state.finderData = null;
+  $('#finderMask').classList.remove('hidden');
+  $('#finderModal').innerHTML = finderShell();
+  // 起点优先级：上次浏览的位置 → 当前仓库 → 输入框里手写的路径
+  const start =
+    localStorage.getItem('gdv.browseDir') ||
+    state.repo ||
+    ($('#repoPath') ? $('#repoPath').value.trim() : '');
+  finderGo(start);
+}
+
+function closeFinder() {
+  if (!state.finderOpen) return;
+  state.finderOpen = false;
+  state.finderSel = '';
+  state.finderData = null;
+  $('#finderMask').classList.add('hidden');
+  $('#finderModal').innerHTML = '';
+}
+
+async function finderGo(target, isRetry) {
+  if (!state.finderOpen) return;
+  const list = $('#finderList');
+  if (list) list.innerHTML = '<div class="modal-loading">读取目录…</div>';
+  try {
+    const data = await api('ls', { path: target || '' });
+    if (!state.finderOpen) return;
+    state.finderData = data;
+    state.finderSel = '';
+    localStorage.setItem('gdv.browseDir', data.path);
+    renderFinder();
+  } catch (err) {
+    if (!state.finderOpen) return;
+    // 记录的上次目录可能已被删除或移动，首次打开时静默退回主目录，别让用户卡在空面板
+    if (!isRetry && !state.finderData) return finderGo('', true);
+    toast(err.message, true);
+    if (list) list.innerHTML = `<div class="finder-empty">${esc(err.message)}</div>`;
+  }
+}
+
+function renderFinder() {
+  const d = state.finderData;
+  if (!d) return;
+
+  const pathInput = $('#finderPath');
+  if (pathInput && pathInput.value !== d.path) pathInput.value = d.path;
+
+  const up = $('#finderUp');
+  if (up) up.disabled = !d.parent;
+
+  const rows = [];
+  // Windows 盘根：先给一排盘符，方便换盘
+  if (d.drives && d.drives.length) {
+    for (const drv of d.drives) {
+      rows.push(`<div class="finder-row" data-dir="${esc(drv)}" title="${esc(drv)}">
+        <span class="ic">${FOLDER_ICON}</span><span class="finder-name">${esc(drv)}</span>
+        <span class="finder-badge">磁盘</span>
+      </div>`);
+    }
+  }
+  for (const dir of d.dirs) {
+    rows.push(`<div class="finder-row${
+      state.finderSel === dir.path ? ' on' : ''
+    }" data-dir="${esc(dir.path)}" title="${esc(dir.path)}">
+      <span class="ic${dir.isRepo ? ' repo' : ''}">${dir.isRepo ? REPO_ICON : FOLDER_ICON}</span>
+      <span class="finder-name">${esc(dir.name)}</span>
+      ${dir.isRepo ? '<span class="finder-badge">git</span>' : ''}
+    </div>`);
+  }
+
+  if (!rows.length) {
+    rows.push('<div class="finder-empty">这个目录下没有子目录<br />可以直接点右下角「选择此目录」</div>');
+  } else if (d.truncated) {
+    rows.push(
+      `<div class="finder-empty">目录太多，只显示前 ${d.dirs.length} 个（共 ${d.total} 个）<br />可在上面直接输入完整路径</div>`
+    );
+  }
+
+  $('#finderList').innerHTML = rows.join('');
+  $('#finderList').scrollTop = 0;
+  syncFinderFoot();
+}
+
+function syncFinderFoot() {
+  const d = state.finderData;
+  if (!d) return;
+  const picked = state.finderSel || d.path;
+  const isRepo = state.finderSel
+    ? !!(d.dirs.find((x) => x.path === state.finderSel) || {}).isRepo
+    : d.isRepo;
+
+  const hint = $('#finderHint');
+  if (hint) {
+    hint.textContent = (state.finderSel ? '已选：' : '当前：') + picked;
+    hint.title = picked;
+  }
+  const btn = $('#finderPick');
+  if (btn) {
+    btn.textContent = isRepo ? '打开这个仓库' : '选择此目录';
+    btn.classList.toggle('primary', isRepo);
+  }
+}
+
+async function finderConfirm() {
+  const d = state.finderData;
+  const target = state.finderSel || (d && d.path);
+  if (!target) return;
+  closeFinder();
+  $('#repoPath').value = target;
+  // openRepo 成功后会把路径记进 gdv.repo，刷新时自动打开，这就是“默认”
+  await openRepo(target);
+}
+// prize add by yanliang for 目录选择器：从磁盘挑一个仓库并记住, 20261023-end
 
 async function openCommit(hash) {
   try {
@@ -2004,11 +2175,65 @@ function bindEvents() {
   });
   // prize add by yanliang for 提交面板事件：遮罩关闭、勾选、amend、Ctrl+Enter 提交, 20261022-end
 
+  // prize add by yanliang for 目录选择器事件：进入目录、选中、确认、关闭, 20261023-start
+  $('#repoPick').addEventListener('click', openFinder);
+
+  $('#finderMask').addEventListener('click', (e) => {
+    if (e.target.id === 'finderMask') return closeFinder();
+    if (e.target.closest('[data-finder-close]')) return closeFinder();
+    const d = state.finderData;
+    if (e.target.closest('#finderUp')) {
+      if (d && d.parent) finderGo(d.parent);
+      return;
+    }
+    if (e.target.closest('#finderHome')) {
+      if (d) finderGo(d.home);
+      return;
+    }
+    if (e.target.closest('#finderPick')) {
+      finderConfirm();
+      return;
+    }
+    const row = e.target.closest('.finder-row');
+    if (row) {
+      state.finderSel = row.dataset.dir || '';
+      document.querySelectorAll('#finderList .finder-row').forEach((r) => r.classList.toggle('on', r === row));
+      syncFinderFoot();
+    }
+  });
+
+  // 双击进入子目录（单击只选中，避免选子目录时被弹进去）
+  $('#finderMask').addEventListener('dblclick', (e) => {
+    const row = e.target.closest('.finder-row');
+    if (!row) return;
+    finderGo(row.dataset.dir || '');
+  });
+
+  $('#finderMask').addEventListener('keydown', (e) => {
+    if (e.target.id !== 'finderPath') return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finderGo(e.target.value.trim());
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!state.finderOpen) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeFinder();
+    }
+  });
+  // prize add by yanliang for 目录选择器事件：进入目录、选中、确认、关闭, 20261023-end
+
   // 键盘导航
   document.addEventListener('keydown', (e) => {
     // prize add by yanliang for 提交面板打开时禁用 j/k 切换提交, 20261022-start
     if (state.commitOpen) return;
     // prize add by yanliang for 提交面板打开时禁用 j/k 切换提交, 20261022-end
+    // prize add by yanliang for 目录选择器打开时同样不要响应快捷键, 20261023-start
+    if (state.finderOpen) return;
+    // prize add by yanliang for 目录选择器打开时同样不要响应快捷键, 20261023-end
     const tag = (document.activeElement && document.activeElement.tagName) || '';
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
     if (!state.commits.length) return;
@@ -2098,7 +2323,19 @@ async function init() {
   const lastRepo = paramRepo || localStorage.getItem('gdv.repo');
   if (lastRepo) {
     $('#repoPath').value = lastRepo;
-    await openRepo(lastRepo);
+    // prize add by yanliang for URL 带仓库时不动地址栏，避免抹掉 commit/cmp 定位参数, 20261023-start
+    let ok = await openRepo(lastRepo, { syncUrl: !paramRepo });
+    // 链接里的仓库已经不存在（比如被删了 / 换机器了）：回退到上次真正打开过的仓库，并修正地址栏
+    if (!ok && paramRepo) {
+      const fallback = localStorage.getItem('gdv.repo');
+      if (fallback && fallback !== paramRepo) {
+        $('#repoPath').value = fallback;
+        ok = await openRepo(fallback, { syncUrl: true });
+        if (ok) return;
+      }
+    }
+    if (!ok) return;
+    // prize add by yanliang for URL 带仓库时不动地址栏，避免抹掉 commit/cmp 定位参数, 20261023-end
 
     const commit = params.get('commit');
     const cmp = params.get('cmp');

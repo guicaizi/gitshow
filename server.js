@@ -751,6 +751,82 @@ function sendJson(res, code, data) {
   res.end(body);
 }
 
+// prize add by yanliang for 目录浏览：供前端在弹出的选择器里挑仓库路径, 20261023-start
+const MAX_DIRS = 500;
+
+function isDirSync(p) {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch (_) {
+    return false;
+  }
+}
+
+function listWindowsDrives() {
+  const out = [];
+  for (let c = 65; c <= 90; c++) {
+    const p = String.fromCharCode(c) + ':\\';
+    try {
+      if (fs.existsSync(p)) out.push(p);
+    } catch (_) {}
+  }
+  return out;
+}
+
+// 只列子目录（不列文件），顺带标记哪些是 git 仓库；隐藏目录不下发，避免 .git 之类干扰
+function listDir(rawPath) {
+  const home = os.homedir();
+  let target = String(rawPath || '').trim();
+  // Windows 上单写 C: 会被 path.resolve 当成“该盘当前目录”，补上分隔符才是盘根
+  if (/^[a-zA-Z]:$/.test(target)) target += path.sep;
+  if (!target) target = home;
+  if (target.includes('\0')) throw new Error('路径不合法');
+
+  const abs = path.resolve(target);
+  let st = null;
+  try {
+    st = fs.statSync(abs);
+  } catch (_) {
+    throw new Error('路径不存在：' + abs);
+  }
+  if (!st.isDirectory()) throw new Error('这不是目录：' + abs);
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(abs, { withFileTypes: true });
+  } catch (_) {
+    throw new Error('没有读取权限：' + abs);
+  }
+
+  const dirs = [];
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue;
+    const full = path.join(abs, e.name);
+    let dir = e.isDirectory();
+    if (!dir && e.isSymbolicLink()) dir = isDirSync(full);
+    if (!dir) continue;
+    dirs.push({ name: e.name, path: full, isRepo: isDirSync(path.join(full, '.git')) });
+  }
+  dirs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+
+  const root = path.parse(abs).root;
+  const atRoot = abs === root;
+
+  return {
+    path: abs,
+    parent: atRoot ? null : path.dirname(abs),
+    home,
+    root,
+    atRoot,
+    drives: process.platform === 'win32' && atRoot ? listWindowsDrives() : null,
+    isRepo: isDirSync(path.join(abs, '.git')),
+    total: dirs.length,
+    truncated: dirs.length > MAX_DIRS,
+    dirs: dirs.slice(0, MAX_DIRS),
+  };
+}
+// prize add by yanliang for 目录浏览：供前端在弹出的选择器里挑仓库路径, 20261023-end
+
 function serveStatic(res, pathname) {
   const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const filePath = path.join(PUBLIC_DIR, rel);
@@ -782,6 +858,13 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, { ok: true, git: GIT_BIN, platform: process.platform, home: os.homedir() });
       // prize add by yanliang for 返回平台信息，前端据此调整路径输入提示, 20261022-end
     }
+
+    // prize add by yanliang for 目录浏览接口，供前端选仓库路径, 20261023-start
+    // 放在 resolveRepo 之前：它不针对某个仓库，只列磁盘目录
+    if (action === 'ls') {
+      return sendJson(res, 200, listDir(q.get('path')));
+    }
+    // prize add by yanliang for 目录浏览接口，供前端选仓库路径, 20261023-end
 
     const repo = await resolveRepo(q.get('repo'));
 
