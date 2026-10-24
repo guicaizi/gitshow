@@ -99,6 +99,14 @@ const state = {
   mdPreview: localStorage.getItem('gdv.mdPreview') === '1',
   mdToken: 0,
   // prize add by yanliang for markdown 在线预览：是否用渲染视图代替源码 diff, 20261023-end
+  // prize add by yanliang for 仓库文件树浏览：改动 / 文件 两种左栏模式, 20261023-start
+  browse: localStorage.getItem('gdv.browse') === 'files' ? 'files' : 'changes',
+  browseSel: '',
+  browseToken: 0,
+  treeCache: new Map(),
+  treeOpen: new Set(),
+  treeLoading: new Map(),
+  // prize add by yanliang for 仓库文件树浏览：改动 / 文件 两种左栏模式, 20261023-end
   filter: '',
   // prize add by yanliang for 提交面板状态：暂存区数据、勾选集合、amend 与提交说明, 20261022-start
   commitOpen: false,
@@ -1060,6 +1068,478 @@ function selectFile(path) {
   renderSelectedFile();
 }
 
+// prize add by yanliang for 仓库文件树：改动 / 文件 双模式，文件按层懒加载, 20261023-start
+// 文件树看哪个版本：提交详情看该提交，比对看目标提交，工作区看 HEAD（内容仍读磁盘最新）
+function browseRev() {
+  const d = state.detail;
+  if (!d) return 'HEAD';
+  if (d.kind === 'commit') return d.hash || 'HEAD';
+  if (d.kind === 'compare') return d.head || 'HEAD';
+  return 'HEAD';
+}
+
+const REVEAL_ICON =
+  '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5"/><path d="M8 1.2v2.1M8 12.7v2.1M1.2 8h2.1M12.7 8h2.1"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>';
+
+// 展开整条祖先链并选中目标文件；silent=true 时失败不弹提示（切换 tab 用）
+async function revealInTree(path, silent) {
+  const target = String(path || '');
+  if (!target) return false;
+  if (!state.treeCache.has('')) await loadTreeDir('', true);
+
+  const parts = target.split('/').filter(Boolean);
+  let dir = '';
+  for (let i = 0; i < parts.length; i++) {
+    const data = state.treeCache.get(dir);
+    if (!data) return false;
+    const name = parts[i];
+    if (i === parts.length - 1) {
+      if (!data.files.some((f) => f.name === name)) {
+        if (!silent) toast('「改动」里选中的文件不在当前版本中', true);
+        return false;
+      }
+      break;
+    }
+    const child = data.dirs.find((d) => d.name === name);
+    if (!child) {
+      if (!silent) toast('「改动」里选中的文件不在当前版本中', true);
+      return false;
+    }
+    state.treeOpen.add(child.path);
+    if (!state.treeCache.has(child.path)) {
+      await loadTreeDir(child.path, true);
+      if (!state.treeCache.has(child.path)) return false;
+    }
+    dir = child.path;
+  }
+  state.browseSel = target;
+  return true;
+}
+
+function repaintBrowseTree() {
+  const treePane = document.querySelector('.file-tree');
+  if (!treePane) return;
+  const top = treePane.scrollTop;
+  treePane.innerHTML = renderBrowseNodes('', 0);
+  treePane.scrollTop = top;
+}
+
+function scrollToBrowseSel() {
+  const el = document.querySelector('.bnode.file.on');
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
+function browseTabsHtml() {  const n = (state.files || []).length;
+  const files = state.browse === 'files';
+  return `<div class="pane-tabs" id="paneTabs">
+    <button class="pane-tab${files ? '' : ' on'}" data-browse="changes">改动<span class="tab-num">${n}</span></button>
+    <button class="pane-tab${files ? ' on' : ''}" data-browse="files">文件</button>
+  </div>`;
+}
+
+function paneHeadHtml() {
+  // 文件模式下给一个「定位到改动里选中的文件」的入口
+  const revealBtn =
+    state.browse === 'files' && state.selected
+      ? `<button class="pane-icon-btn" id="revealChange" title="定位到「改动」里选中的文件">${REVEAL_ICON}</button>`
+      : '';
+  return `<div class="pane-head-row">${browseTabsHtml()}${revealBtn}</div>${
+    state.browse === 'files'
+      ? ''
+      : `<input class="file-filter" id="fileFilter" placeholder="筛选文件…" value="${esc(state.filter)}" />`
+  }`;
+}
+
+function switchBrowse(mode) {
+  if (state.browse === mode) return;
+  state.browse = mode;
+  localStorage.setItem('gdv.browse', mode);
+  renderBrowserPane();
+  renderToolbar();
+  // 切到文件树时，自动定位到「改动」里选中的那个文件
+  if (mode === 'files' && state.selected) {
+    revealInTree(state.selected, true).then((ok) => {
+      if (!ok) return;
+      repaintBrowseTree();
+      scrollToBrowseSel();
+      renderBrowseFile();
+    });
+  }
+}
+
+// 右栏按当前模式分发：改动视图看 diff，文件视图看内容
+function renderRightPane() {
+  if (state.browse === 'files') renderBrowseFile();
+  else renderSelectedFile();
+}
+
+function renderBrowserPane() {
+  const head = document.querySelector('.pane-head');
+  const treePane = document.querySelector('.file-tree');
+  if (!head || !treePane) return;
+
+  head.innerHTML = paneHeadHtml();
+
+  if (state.browse === 'files') {
+    treePane.classList.add('browse-tree');
+    treePane.innerHTML = state.treeCache.has('')
+      ? renderBrowseNodes('', 0)
+      : '<div class="bnode-load">读取目录…</div>';
+    if (!state.treeCache.has('')) loadTreeDir('');
+  } else {
+    treePane.classList.remove('browse-tree');
+    treePane.innerHTML = renderTreeNode(buildFileTree(state.files || []), 0);
+    applyFilter();
+  }
+  renderRightPane();
+}
+
+// 只请求一层：展开哪个目录才读哪个，仓库再大也只多一次 ls-tree
+// 同一目录的并发请求共用一个 Promise（切 tab 时会被两处同时触发）
+async function loadTreeDir(dirPath, silent) {
+  const key = dirPath || '';
+  let pending = state.treeLoading.get(key);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const data = await api('tree', { path: key, rev: browseRev() });
+        state.treeCache.set(key, data);
+      } catch (err) {
+        toast(err.message, true);
+        state.treeCache.set(key, { dirs: [], files: [], error: err.message });
+      } finally {
+        state.treeLoading.delete(key);
+      }
+    })();
+    state.treeLoading.set(key, pending);
+  }
+  await pending;
+  // silent 交给调用方统一重绘（定位时要连开好几层，避免每层都闪一次）
+  if (!silent && state.browse === 'files') repaintBrowseTree();
+}
+
+function renderBrowseNodes(dirPath, depth) {
+  const data = state.treeCache.get(dirPath);
+  if (!data) return '';
+  const pad = 8 + depth * 13;
+  let html = '';
+  for (const d of data.dirs) {
+    const open = state.treeOpen.has(d.path);
+    html += `<div class="bnode dir${open ? ' open' : ''}" data-bdir="${esc(d.path)}" style="padding-left:${pad}px">
+      <span class="bcaret">${open ? '▾' : '▸'}</span><span class="bname">${esc(d.name)}</span></div>`;
+    if (open) {
+      html += state.treeCache.has(d.path)
+        ? renderBrowseNodes(d.path, depth + 1)
+        : `<div class="bnode-load" style="padding-left:${pad + 13}px">读取中…</div>`;
+    }
+  }
+  for (const f of data.files) {
+    html += `<div class="bnode file${f.path === state.browseSel ? ' on' : ''}" data-bfile="${esc(
+      f.path
+    )}" style="padding-left:${pad}px" title="${esc(f.path)}">
+      <span class="bcaret"></span><span class="bname">${esc(f.name)}</span></div>`;
+  }
+  return html;
+}
+
+function treeClickNode(el) {
+  const dir = el.closest('[data-bdir]');
+  if (dir) {
+    const path = dir.dataset.bdir;
+    if (state.treeOpen.has(path)) state.treeOpen.delete(path);
+    else {
+      state.treeOpen.add(path);
+      if (!state.treeCache.has(path)) loadTreeDir(path);
+    }
+    const treePane = document.querySelector('.file-tree');
+    if (treePane) treePane.innerHTML = renderBrowseNodes('', 0);
+    return true;
+  }
+  const file = el.closest('[data-bfile]');
+  if (file) {
+    state.browseSel = file.dataset.bfile;
+    document.querySelectorAll('.bnode.file.on').forEach((n) => n.classList.remove('on'));
+    file.classList.add('on');
+    renderBrowseFile();
+    return true;
+  }
+  return false;
+}
+
+// prize add by yanliang for 代码语法高亮（零依赖，逐行状态机，支持跨行注释/字符串）, 20261023-start
+const HL_LANG = {
+  js: 'js', mjs: 'js', cjs: 'js', jsx: 'js',
+  ts: 'ts', tsx: 'ts',
+  java: 'java', kt: 'java', kts: 'java', gradle: 'java',
+  go: 'go',
+  c: 'c', h: 'c', cc: 'c', cpp: 'c', cxx: 'c', hpp: 'c',
+  py: 'py',
+  sh: 'sh', bash: 'sh', zsh: 'sh', bat: 'sh', cmd: 'sh',
+  xml: 'xml', html: 'xml', htm: 'xml', svg: 'xml', vue: 'xml',
+  css: 'css', scss: 'css', less: 'css',
+  json: 'json',
+  sql: 'sql',
+  yml: 'yaml', yaml: 'yaml',
+};
+
+const HL_KW = {
+  js:
+    'const let var function return if else for while do break continue class extends new this super import export from default async await try catch finally throw typeof instanceof in of delete void yield switch case static get set null true false undefined NaN',
+  ts:
+    'const let var function return if else for while do break continue class extends new this super import export from default async await try catch finally throw typeof instanceof in of delete void yield switch case static get set null true false undefined interface type enum implements public private protected readonly declare namespace abstract as satisfies keyof infer never unknown any',
+  java:
+    'public private protected static final abstract class interface enum extends implements new return if else for while do switch case break continue try catch finally throw throws import package this super void int long double float boolean char byte short null true false instanceof synchronized volatile transient native default record var final',
+  go:
+    'package import func var const type struct interface map chan go defer return if else for range switch case break continue fallthrough select default nil true false string int int64 int32 float64 float32 bool byte rune error make new len cap append panic recover',
+  c:
+    'int char float double void long short unsigned signed struct union enum typedef static const extern return if else for while do switch case break continue goto sizeof volatile register inline NULL nullptr class namespace using template typename public private protected virtual override new delete this true false auto constexpr include define ifndef endif pragma',
+  py:
+    'def class return if elif else for while break continue import from as pass raise try except finally with lambda yield global nonlocal assert del in is not and or None True False async await self print len range str int float dict list set tuple',
+  sh:
+    'if then else elif fi for while do done case esac function return export local readonly source echo cd exit set unset shift eval exec trap alias printf read test',
+  sql:
+    'select from where insert into values update set delete create table drop alter add index join left right inner outer on group by order having limit offset as and or not null distinct count sum avg min max case when then end',
+  json: 'true false null',
+  yaml: 'true false null yes no on off',
+};
+
+// 简体规则表：行注释前缀 / 块注释 / 字符串引号 / 关键字集合
+const HL_SYN = {
+  js: { line: '//', block: ['/*', '*/'], quotes: '"\'`', kw: 'js', ml: '`' },
+  ts: { line: '//', block: ['/*', '*/'], quotes: '"\'`', kw: 'ts', ml: '`' },
+  java: { line: '//', block: ['/*', '*/'], quotes: '"\'', kw: 'java' },
+  go: { line: '//', block: ['/*', '*/'], quotes: '"`', kw: 'go', ml: '`' },
+  c: { line: '//', block: ['/*', '*/'], quotes: '"\'', kw: 'c' },
+  py: { line: '#', block: null, quotes: '"\'', kw: 'py' },
+  sh: { line: '#', block: null, quotes: '"\'', kw: 'sh' },
+  sql: { line: '--', block: ['/*', '*/'], quotes: "'\"", kw: 'sql' },
+  xml: { line: null, block: ['<!--', '-->'], quotes: '"\'', kw: null },
+  css: { line: null, block: ['/*', '*/'], quotes: '"\'', kw: null },
+  json: { line: null, block: null, quotes: '"', kw: 'json' },
+  yaml: { line: '#', block: null, quotes: '"\'', kw: 'yaml' },
+};
+
+const HL_MAX_LINES = 4000;
+const HL_KW_SETS = new Map();
+function hlKwSet(name) {
+  if (!name) return null;
+  if (!HL_KW_SETS.has(name)) {
+    HL_KW_SETS.set(name, new Set(String(HL_KW[name] || '').split(/\s+/).filter(Boolean)));
+  }
+  return HL_KW_SETS.get(name);
+}
+
+function langOf(p) {
+  const ext = String(p || '').split('.').pop().toLowerCase();
+  return HL_LANG[ext] || '';
+}
+
+// 逐行扫描；st 在行间传递，保证跨行的 /* */ 与模板字符串也能正确着色
+function hlLine(line, syn, kw, st) {
+  let out = '';
+  let i = 0;
+  const n = line.length;
+  const span = (cls, text) => (cls ? `<span class="tk tk-${cls}">${esc(text)}</span>` : esc(text));
+
+  while (i < n) {
+    if (st.blockEnd) {
+      const end = line.indexOf(st.blockEnd, i);
+      if (end < 0) {
+        out += span(st.blockCls, line.slice(i));
+        return out;
+      }
+      out += span(st.blockCls, line.slice(i, end + st.blockEnd.length));
+      i = end + st.blockEnd.length;
+      st.blockEnd = '';
+      st.blockCls = '';
+      continue;
+    }
+
+    if (syn.line && line.startsWith(syn.line, i)) {
+      out += span('c', line.slice(i));
+      return out;
+    }
+
+    if (syn.block && line.startsWith(syn.block[0], i)) {
+      const startAt = i + syn.block[0].length;
+      const end = line.indexOf(syn.block[1], startAt);
+      if (end < 0) {
+        out += span('c', line.slice(i));
+        st.blockEnd = syn.block[1];
+        st.blockCls = 'c';
+        return out;
+      }
+      out += span('c', line.slice(i, end + syn.block[1].length));
+      i = end + syn.block[1].length;
+      continue;
+    }
+
+    const ch = line[i];
+    if (syn.quotes.includes(ch)) {
+      let j = i + 1;
+      let closed = false;
+      while (j < n) {
+        if (line[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (line[j] === ch) {
+          j++;
+          closed = true;
+          break;
+        }
+        j++;
+      }
+      if (j > n) j = n;
+      out += span('s', line.slice(i, j));
+      if (!closed && syn.ml === ch) {
+        st.blockEnd = ch;
+        st.blockCls = 's';
+      }
+      i = j;
+      continue;
+    }
+
+    // 数字（含 0x、小数、指数、常见后缀）
+    if (ch >= '0' && ch <= '9') {
+      let j = i;
+      while (j < n && /[0-9a-fA-FxX._]/.test(line[j])) j++;
+      if (j < n && /[eE]/.test(line[j]) && /[0-9+-]/.test(line[j + 1] || '')) {
+        j += 2;
+        while (j < n && /[0-9]/.test(line[j])) j++;
+      }
+      while (j < n && /[a-zA-Z]{1,2}$/.test(line.slice(i, j)) && /[flFLuUL]/.test(line[j])) j++;
+      out += span('n', line.slice(i, j));
+      i = j;
+      continue;
+    }
+
+    if (/[A-Za-z_$@]/.test(ch)) {
+      // 从 i+1 起扫，@ 这类前缀字符本身也算 token，否则 i 不前进会死循环
+      let j = i + 1;
+      while (j < n && /[\w$]/.test(line[j])) j++;
+      const word = line.slice(i, j);
+      i = j;
+      const bare = word.replace(/^@/, '');
+      const after = line[i];
+      if (kw && kw.has(bare)) out += span('k', word);
+      else if (word.startsWith('@')) out += span('a', word);
+      else if (/^[A-Z][A-Za-z0-9_]*$/.test(bare)) out += span('t', word);
+      else if (after === '(') out += span('f', word);
+      else out += esc(word);
+      continue;
+    }
+
+    out += esc(ch);
+    i++;
+  }
+  return out;
+}
+
+function hlLines(lines, lang) {
+  const syn = HL_SYN[lang];
+  if (!syn) return null;
+  const kw = hlKwSet(syn.kw);
+  const st = { blockEnd: '', blockCls: '' };
+  const out = new Array(lines.length);
+  for (let i = 0; i < lines.length; i++) out[i] = hlLine(lines[i], syn, kw, st);
+  return out;
+}
+// prize add by yanliang for 代码语法高亮（零依赖，逐行状态机，支持跨行注释/字符串）, 20261023-end
+
+function fmtSize(n) {
+  const b = Number(n) || 0;
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function renderCodeView(text, filePath) {
+  const lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
+  const MAX = 6000;
+  const cut = lines.length > MAX;
+  const show = cut ? lines.slice(0, MAX) : lines;
+  const lang = langOf(filePath);
+  // 大文件不上色：span 太多会把排版拖慢
+  const hl = lang && show.length <= HL_MAX_LINES ? hlLines(show, lang) : null;
+  const w = String(show.length).length;
+  // 两个 pre：一个放行号、一个放代码。比「每行一个 div」的节点数少一个量级
+  const gutter = show.map((_l, i) => i + 1).join('\n');
+  const code = hl ? hl.join('\n') : esc(show.join('\n'));
+  const tips = [];
+  if (cut) tips.push(`文件较大，只显示前 ${MAX} 行（共 ${lines.length} 行）`);
+  else if (lang && !hl) tips.push(`超过 ${HL_MAX_LINES} 行，已关闭语法高亮`);
+  const tip = tips.length ? `<div class="fv-cut">${tips.join('　')}</div>` : '';
+  return `<div class="file-view${state.wrap ? ' wrap' : ''}" style="--fv-w:${w}"><pre class="fv-gutter">${gutter}</pre><pre class="fv-code">${code}</pre></div>${tip}`;
+}
+
+async function renderBrowseFile() {
+  const pane = $('#diffPane');
+  if (!pane) return;
+  const path = state.browseSel;
+  if (!path) {
+    pane.innerHTML = '<div class="pane-empty">在左侧「文件」里选一个文件，这里显示它的内容</div>';
+    renderToolbar();
+    return;
+  }
+
+  const md = isMarkdown(path);
+  const mdMode = md && state.mdPreview;
+  pane.classList.remove('split-mode');
+  pane.innerHTML = `
+    <div class="diff-pane-head" data-file="${esc(path)}">
+      <span class="pane-file-path" title="${esc(path)}">${esc(path)}</span>
+      ${
+        md
+          ? `<button class="btn tiny md-toggle${mdMode ? ' on' : ''}" id="mdToggle" title="${
+              mdMode ? '显示源码' : '渲染成排版后的文档'
+            }">${mdMode ? '源码' : '预览'}</button>`
+          : ''
+      }
+      <span class="file-stat" id="fvStat"></span>
+    </div>
+    <div class="diff-pane-body" id="diffPaneBody"><div class="md-loading">读取文件…</div></div>
+    <div class="split-handle" id="splitHandle" style="display:none"></div>`;
+
+  const token = ++state.browseToken;
+  try {
+    const data = await api('file', { path, rev: browseRev() });
+    if (token !== state.browseToken) return;
+    const stat = $('#fvStat');
+    const body = $('#diffPaneBody');
+    if (!body) return;
+    if (data.binary) {
+      if (stat) stat.textContent = fmtSize(data.size);
+      body.innerHTML = '<div class="binary-note">二进制文件，不显示内容</div>';
+      renderToolbar();
+      return;
+    }
+    const lineCount = data.content ? data.content.split('\n').length : 0;
+    if (stat) {
+      stat.innerHTML = `<span class="fv-meta">${fmtSize(data.size)} · ${lineCount} 行</span>`;
+    }
+    if (mdMode) {
+      mdCtx = { file: data.path, rev: data.rev === 'worktree' ? '' : data.rev };
+      body.innerHTML = `<article class="md-view">${markdownToHtml(data.content)}</article>`;
+    } else {
+      body.innerHTML = renderCodeView(data.content, data.path);
+    }
+  } catch (err) {
+    if (token !== state.browseToken) return;
+    const body = $('#diffPaneBody');
+    if (body) body.innerHTML = `<div class="empty-note">读取失败：${esc(err.message)}</div>`;
+  }
+  renderToolbar();
+}
+
+// 切提交 / 刷新工作区时，文件树缓存与展开状态都作废
+function resetTreeState() {
+  state.treeCache.clear();
+  state.treeOpen.clear();
+  state.treeLoading.clear();  state.browseToken++;
+}
+// prize add by yanliang for 仓库文件树：改动 / 文件 双模式，文件按层懒加载, 20261023-end
+
 // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
 // 比例换算成 grid 的 fr 权重：0.5 即 1fr : 1fr
 function applySplitRatio() {
@@ -1141,6 +1621,14 @@ function renderDiff() {
   const d = state.detail;
   if (!d) return;
 
+  // prize add by yanliang for 换了版本才清文件树缓存，同一版本内刷新保持展开状态, 20261023-start
+  const treeRev = browseRev();
+  if (state.treeRev !== treeRev) {
+    resetTreeState();
+    state.treeRev = treeRev;
+  }
+  // prize add by yanliang for 换了版本才清文件树缓存，同一版本内刷新保持展开状态, 20261023-end
+
   const files = parsePatch(d.patch || '');
   const live = d.kind === 'working';
   const statusMap = d.status || {};
@@ -1165,7 +1653,7 @@ function renderDiff() {
   scroll.dataset.del = String(sumDel);
   state.files = files;
 
-  if (!files.length) {
+  if (!files.length && state.browse !== 'files') {
     scroll.innerHTML = `<div class="skeleton">${live ? '工作区没有未提交的改动' : '这次提交没有文件改动'}</div>`;
     state.opsIndex = null;
     state.selected = '';
@@ -1183,20 +1671,27 @@ function renderDiff() {
 
   scroll.innerHTML = `
     <aside class="file-pane" id="filePane">
-      <div class="pane-head">
-        <div class="pane-head-row">
-          <span class="pane-title">改动文件</span>
-          <span class="pane-count" id="filePaneCount">${files.length}</span>
-        </div>
-        <input class="file-filter" id="fileFilter" placeholder="筛选文件…" value="${esc(state.filter)}" />
-      </div>
-      <div class="file-tree">${renderTreeNode(tree, 0)}</div>
+      <div class="pane-head">${paneHeadHtml()}</div>
+      <div class="file-tree${state.browse === 'files' ? ' browse-tree' : ''}">${
+        state.browse === 'files'
+          ? state.treeCache.has('')
+            ? renderBrowseNodes('', 0)
+            : '<div class="bnode-load">读取目录…</div>'
+          : renderTreeNode(tree, 0)
+      }</div>
     </aside>
     <div class="pane-resizer" id="paneResizer" title="拖动调整文件栏宽度，双击复位"></div>
     <section class="diff-pane" id="diffPane"></section>`;
 
-  renderSelectedFile();
-  applyFilter();
+  // prize add by yanliang for 左栏「改动 / 文件」两种模式, 20261023-start
+  if (state.browse === 'files') {
+    if (!state.treeCache.has('')) loadTreeDir('');
+    renderBrowseFile();
+  } else {
+    renderSelectedFile();
+    applyFilter();
+  }
+  // prize add by yanliang for 左栏「改动 / 文件」两种模式, 20261023-end
   // prize add by yanliang for 左侧文件目录树 + 右侧 diff 双栏布局, 20261022-end
 
   renderToolbar();
@@ -1210,15 +1705,19 @@ function renderToolbar() {
   const del = scroll.dataset.del || '0';
 
   // prize add by yanliang for 预览模式下收起源码视图相关开关, 20261023-start
-  const mdMode = state.mdPreview && isMarkdown(state.selected);
+  const fileMode = state.browse === 'files';
+  const mdMode = state.mdPreview && isMarkdown(fileMode ? state.browseSel : state.selected);
+  const wrapBtn = `<button class="btn small ${state.wrap ? 'active' : ''}" id="wrapToggle" title="超长代码行自动折行">自动换行</button>`;
   const sourceOps = mdMode
     ? '<span class="md-hint">Markdown 预览</span>'
-    : `<div class="seg" id="viewSeg">
+    : fileMode
+      ? `<span class="md-hint">仓库文件（只读）</span>${wrapBtn}`
+      : `<div class="seg" id="viewSeg">
       <button data-view="split" class="${state.view === 'split' ? 'on' : ''}">并排</button>
       <button data-view="inline" class="${state.view === 'inline' ? 'on' : ''}">内联</button>
     </div>
     <button class="btn small ${state.ignoreSpace ? 'active' : ''}" id="ignoreSpace" title="忽略空格与缩进变化">忽略空白</button>
-    <button class="btn small ${state.wrap ? 'active' : ''}" id="wrapToggle" title="超长代码行自动折行">自动换行</button>`;
+    ${wrapBtn}`;
   // prize add by yanliang for 预览模式下收起源码视图相关开关, 20261023-end
 
   $('#diffToolbar').innerHTML = `
@@ -2239,7 +2738,8 @@ function bindEvents() {
         const prev = $('#diffPaneBody');
         const top = prev ? prev.scrollTop : 0;
         const left = prev ? prev.scrollLeft : 0;
-        renderSelectedFile();
+        // 文件浏览模式下重绘的是文件内容，diff 模式下重绘 diff
+        renderRightPane();
         const now = $('#diffPaneBody');
         if (now) {
           now.scrollTop = top;
@@ -2270,6 +2770,23 @@ function bindEvents() {
   // prize add by yanliang for 筛选框移到左侧文件栏后，改由 #diffScroll 事件委托, 20261022-end
 
   $('#diffScroll').addEventListener('click', (e) => {
+    // prize add by yanliang for 左栏「改动 / 文件」切换与文件树点击, 20261023-start
+    const tab = e.target.closest('#paneTabs [data-browse]');
+    if (tab) {
+      switchBrowse(tab.dataset.browse);
+      return;
+    }
+    if (e.target.closest('#revealChange')) {
+      revealInTree(state.selected).then((ok) => {
+        if (!ok) return;
+        repaintBrowseTree();
+        scrollToBrowseSel();
+        renderBrowseFile();
+      });
+      return;
+    }
+    if (treeClickNode(e.target)) return;
+    // prize add by yanliang for 左栏「改动 / 文件」切换与文件树点击, 20261023-end
     // prize add by yanliang for 文件/目录行内的暂存、取消暂存、忽略按钮, 20261022-start
     const opBtn = e.target.closest('[data-op]');
     if (opBtn) {
@@ -2419,7 +2936,7 @@ function bindEvents() {
     if (e.target.closest('#mdToggle')) {
       state.mdPreview = !state.mdPreview;
       localStorage.setItem('gdv.mdPreview', state.mdPreview ? '1' : '0');
-      renderSelectedFile();
+      renderRightPane();
       return;
     }
     // prize add by yanliang for markdown 预览/源码切换（记住偏好）, 20261023-end

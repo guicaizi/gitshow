@@ -595,6 +595,49 @@ async function readFileText(repo, rawPath, rawRev) {
 }
 // prize add by yanliang for 读取单个文件内容，供 markdown / 图片在线预览, 20261023-end
 
+// prize add by yanliang for 仓库文件树：按层懒加载，一次只读一层目录, 20261023-start
+async function readTree(repo, rawRev, rawPath) {
+  const rev = safeRev(rawRev) || 'HEAD';
+  let dir = String(rawPath == null ? '' : rawPath).replace(/\\/g, '/').replace(/^\/+/, '').trim();
+  if (dir.includes('\0')) throw new Error('路径含非法字符');
+  if (dir.split('/').includes('..')) throw new Error('路径越界：' + dir);
+  if (dir && !dir.endsWith('/')) dir += '/';
+
+  const args = ['ls-tree', '-l', rev];
+  if (dir) args.push('--', dir);
+
+  let out = '';
+  try {
+    out = await git(args, repo);
+  } catch (err) {
+    throw new Error(`读取目录失败：${String(err.message || '').trim() || rev}`);
+  }
+
+  const dirs = [];
+  const files = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    const meta = line.slice(0, tab).split(/\s+/);
+    const full = line.slice(tab + 1);
+    const name = full.slice(full.lastIndexOf('/') + 1);
+    if (!name) continue;
+    const type = meta[1];
+    const mode = meta[0];
+    if (type === 'tree') dirs.push({ name, path: full });
+    else files.push({ name, path: full, size: Number(meta[3]) || 0, mode, type: type || 'blob' });
+  }
+
+  const byName = (a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true });
+  dirs.sort(byName);
+  files.sort(byName);
+
+  return { rev, path: dir, dirs, files };
+}
+// prize add by yanliang for 仓库文件树：按层懒加载，一次只读一层目录, 20261023-end
+
+
 function escapeIgnorePattern(p) {
   return p
     .replace(/[\\*?[\]]/g, (m) => `\\${m}`)
@@ -1011,6 +1054,9 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, await readWorkingTree(repo, ignoreSpace));
     }
     // prize add by yanliang for 单文件内容接口：markdown 预览与图片资源, 20261023-start
+    if (action === 'tree') {
+      return sendJson(res, 200, await readTree(repo, q.get('rev'), q.get('path')));
+    }
     if (action === 'file') {
       return sendJson(res, 200, await readFileText(repo, q.get('path'), q.get('rev')));
     }

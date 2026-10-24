@@ -1926,3 +1926,182 @@ td.code .marker {
   transform: rotate(42deg);
 }
 /* prize add by yanliang for markdown 在线预览样式, 20261023-end */
+
+/* prize add by yanliang for 仓库文件树浏览：左栏 tab、懒加载树、文件内容视图, 20261023-start */
+.pane-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pane-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pane-tab:hover { color: var(--text); background: var(--bg-hover); }
+
+.pane-tab.on {
+  color: var(--text);
+  font-weight: 600;
+  background: var(--bg-active);
+}
+
+.tab-num {
+  padding: 0 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-3);
+  background: var(--bg-hover);
+  border-radius: 8px;
+}
+
+.pane-tab.on .tab-num { color: var(--text-2); background: var(--bg); }
+
+.bnode {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding-right: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bnode:hover { background: var(--bg-hover); color: var(--text); }
+.bnode.dir .bname { font-weight: 500; }
+.bnode.file.on { color: var(--text); background: var(--accent-soft); }
+
+.bcaret {
+  flex: 0 0 10px;
+  width: 10px;
+  font-size: 9px;
+  line-height: 1;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.bname { overflow: hidden; text-overflow: ellipsis; }
+
+.bnode-load {
+  height: 22px;
+  padding-left: 21px;
+  font-size: 11.5px;
+  line-height: 22px;
+  color: var(--text-3);
+}
+
+.file-view {
+  display: flex;
+  align-items: flex-start;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.fv-gutter {
+  flex: 0 0 auto;
+  width: calc(var(--fv-w, 3) * 1ch + 16px);
+  margin: 0;
+  padding: 0 10px 0 0;
+  font: inherit;
+  text-align: right;
+  color: var(--text-3);
+  white-space: pre;
+  user-select: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+
+.fv-code {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0 16px 0 12px;
+  font: inherit;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.file-view.wrap .fv-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.fv-cut {
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.fv-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+/* prize add by yanliang for 仓库文件树浏览：左栏 tab、懒加载树、文件内容视图, 20261023-end */
+
+/* prize add by yanliang for 文件树「定位到改动文件」按钮, 20261023-start */
+.pane-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 22px;
+  margin-left: auto;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.pane-icon-btn:hover { color: var(--accent); background: var(--bg-hover); }
+/* prize add by yanliang for 文件树「定位到改动文件」按钮, 20261023-end */
+
+/* prize add by yanliang for 代码语法高亮配色, 20261023-start */
+.file-view {
+  --tk-k: #cf222e;
+  --tk-s: #0a3069;
+  --tk-c: #6e7781;
+  --tk-n: #0550ae;
+  --tk-f: #8250df;
+  --tk-t: #953800;
+  --tk-a: #116329;
+}
+
+[data-theme="dark"] .file-view {
+  --tk-k: #ff7b72;
+  --tk-s: #a5d6ff;
+  --tk-c: #8b949e;
+  --tk-n: #79c0ff;
+  --tk-f: #d2a8ff;
+  --tk-t: #ffa657;
+  --tk-a: #7ee787;
+}
+
+.file-view .tk-k { color: var(--tk-k); }
+.file-view .tk-s { color: var(--tk-s); }
+.file-view .tk-c { color: var(--tk-c); font-style: italic; }
+.file-view .tk-n { color: var(--tk-n); }
+.file-view .tk-f { color: var(--tk-f); }
+.file-view .tk-t { color: var(--tk-t); }
+.file-view .tk-a { color: var(--tk-a); }
+
+/* prize add by yanliang for 代码语法高亮配色, 20261023-end */
