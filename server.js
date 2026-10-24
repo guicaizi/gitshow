@@ -13,7 +13,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 // prize add by yanliang for 新增 git 可执行文件探测, 20261022-start
 const GIT_CANDIDATES = [
@@ -577,23 +577,258 @@ async function readBlob(repo, rawPath, rawRev) {
   }
   if (!st.isFile()) throw new Error(`这不是普通文件：${rel}`);
   if (st.size > PREVIEW_RAW_MAX) throw new Error(`文件太大，不预览（${(st.size / 1024 / 1024).toFixed(1)}MB）`);
-  return { rel, rev: 'worktree', size: st.size, buf: fs.readFileSync(abs) };
+  // prize add by yanliang for 文件编辑：把 mtime 一并返回，保存时用来发现外部改动, 20261024-start
+  return { rel, rev: 'worktree', size: st.size, mtimeMs: st.mtimeMs, buf: fs.readFileSync(abs) };
+  // prize add by yanliang for 文件编辑：把 mtime 一并返回，保存时用来发现外部改动, 20261024-end
 }
 
 async function readFileText(repo, rawPath, rawRev) {
-  const { rel, rev, size, buf } = await readBlob(repo, rawPath, rawRev);
+  const { rel, rev, size, mtimeMs, buf } = await readBlob(repo, rawPath, rawRev);
   const binary = buf.includes(0);
   const tooLarge = size > PREVIEW_TEXT_MAX;
   return {
     path: rel,
     rev,
     size,
+    // prize add by yanliang for 文件编辑：工作区文件带上 mtimeMs，历史版本没有, 20261024-start
+    mtimeMs: mtimeMs || 0,
+    // prize add by yanliang for 文件编辑：工作区文件带上 mtimeMs，历史版本没有, 20261024-end
     binary,
     tooLarge,
     content: binary || tooLarge ? '' : buf.toString('utf8'),
   };
 }
 // prize add by yanliang for 读取单个文件内容，供 markdown / 图片在线预览, 20261023-end
+
+// prize add by yanliang for 文件编辑器：把工作区文本文件写回磁盘, 20261024-start
+// 定位是「就地改一个已有文件」，不负责新建 / 删除 / 改权限，越界的事一概不做。
+const SAVE_TEXT_MAX = 2 * 1024 * 1024;
+
+async function saveWorktreeFile(repo, rawPath, rawContent, baseMtimeMs) {
+  const rel = safeRelPath(rawPath);
+  if (rel.split('/')[0] === '.git') throw new Error('不能编辑 .git 目录里的文件');
+  const abs = worktreeFile(repo, rel);
+
+  const st = await fs.promises.stat(abs).catch(() => null);
+  if (!st) throw new Error(`文件不存在（可能已被删除）：${rel}`);
+  if (!st.isFile()) throw new Error(`这不是普通文件：${rel}`);
+  if (st.size > SAVE_TEXT_MAX) {
+    throw new Error(`文件超过 2MB，不支持在线编辑（${(st.size / 1024 / 1024).toFixed(1)}MB）`);
+  }
+
+  const oldBuf = await fs.promises.readFile(abs);
+  if (oldBuf.includes(0)) throw new Error('二进制文件不支持在线编辑');
+
+  const content = String(rawContent == null ? '' : rawContent);
+  if (content.includes('\0')) throw new Error('内容含非法字符');
+  if (Buffer.byteLength(content, 'utf8') > SAVE_TEXT_MAX) throw new Error('内容超过 2MB，未保存');
+
+  // 编辑期间文件被别人改过（本机其它编辑器、git checkout、构建脚本）就别覆盖了，
+  // 前端重新读一次再保存即可；留 1ms 容差，避免文件系统 mtime 精度差异误判
+  if (baseMtimeMs && Math.abs(Number(baseMtimeMs) - st.mtimeMs) > 1) {
+    throw new Error('文件已被其他程序修改，请重新打开再编辑');
+  }
+
+  // 换行风格跟随原文件：Windows 项目里把 CRLF 写成 LF 会让整个文件在 diff 里全变红
+  const oldText = oldBuf.toString('utf8');
+  const crlf = oldText.includes('\r\n');
+  const normalized = content.replace(/\r\n?/g, '\n');
+  const out = crlf ? normalized.replace(/\n/g, '\r\n') : normalized;
+
+  if (out === oldText) {
+    return { ok: true, path: rel, size: st.size, mtimeMs: st.mtimeMs, eol: crlf ? 'crlf' : 'lf', unchanged: true };
+  }
+
+  // 直接写而不是「临时文件 + rename」：rename 会换 inode，外部编辑器的文件监听会当成删除+新建
+  await fs.promises.writeFile(abs, out, 'utf8');
+  const st2 = await fs.promises.stat(abs);
+  return { ok: true, path: rel, size: st2.size, mtimeMs: st2.mtimeMs, eol: crlf ? 'crlf' : 'lf', unchanged: false };
+}
+// prize add by yanliang for 文件编辑器：把工作区文本文件写回磁盘, 20261024-end
+
+// prize add by yanliang for 仓库文件树：按层懒加载，一次只读一层目录, 20261023-start
+async function readTree(repo, rawRev, rawPath) {
+  const rev = safeRev(rawRev) || 'HEAD';
+  let dir = String(rawPath == null ? '' : rawPath).replace(/\\/g, '/').replace(/^\/+/, '').trim();
+  if (dir.includes('\0')) throw new Error('路径含非法字符');
+  if (dir.split('/').includes('..')) throw new Error('路径越界：' + dir);
+  if (dir && !dir.endsWith('/')) dir += '/';
+
+  const args = ['ls-tree', '-l', rev];
+  if (dir) args.push('--', dir);
+
+  let out = '';
+  try {
+    out = await git(args, repo);
+  } catch (err) {
+    throw new Error(`读取目录失败：${String(err.message || '').trim() || rev}`);
+  }
+
+  const dirs = [];
+  const files = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    const meta = line.slice(0, tab).split(/\s+/);
+    const full = line.slice(tab + 1);
+    const name = full.slice(full.lastIndexOf('/') + 1);
+    if (!name) continue;
+    const type = meta[1];
+    const mode = meta[0];
+    if (type === 'tree') dirs.push({ name, path: full });
+    else files.push({ name, path: full, size: Number(meta[3]) || 0, mode, type: type || 'blob' });
+  }
+
+  const byName = (a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true });
+  dirs.sort(byName);
+  files.sort(byName);
+
+  return { rev, path: dir, dirs, files };
+}
+// prize add by yanliang for 仓库文件树：按层懒加载，一次只读一层目录, 20261023-end
+
+// prize add by yanliang for 「文件」搜索：服务端流式建索引 + 服务端过滤, 20261026-start
+// 目录树是按层懒加载的，靠已加载的缓存搜不到没展开的目录，所以搜索要单独拿一份全量路径。
+// 但不能整包给前端：ALPS 级仓库 147 万文件，ls-tree -z 输出 126MB，既撑爆 execFile 的
+// maxBuffer（报 stdout maxBuffer length exceeded），也不可能在浏览器里存下。
+// 做法：spawn 流式拼成一个大字符串建索引（缓存起来），搜索在服务端做，只回命中项。
+const FILE_SEARCH_MAX = 200;
+const PATH_INDEX_TTL = 5 * 60 * 1000;
+const PATH_INDEX_MAX_ENTRIES = 2; // 一份索引可达上百 MB，只留最近两个版本
+const PATH_INDEX_MAX_CHARS = 300 * 1024 * 1024; // 再加一道总量闸，别让两份大索引同时挂着
+const pathIndex = new Map(); // key -> { text, total, at, promise, error }
+
+function pathIndexKey(repo, rev) {
+  return `${repo}\n${rev}`;
+}
+
+function pathIndexChars() {
+  let n = 0;
+  for (const e of pathIndex.values()) n += e.text ? e.text.length : 0;
+  return n;
+}
+
+function evictPathIndex() {
+  // 条数和总字符数双重上限：先建的最先淘汰，正在建的那条永远最新，不会被删
+  while (pathIndex.size > 1 && (pathIndex.size > PATH_INDEX_MAX_ENTRIES || pathIndexChars() > PATH_INDEX_MAX_CHARS)) {
+    pathIndex.delete(pathIndex.keys().next().value);
+  }
+}
+
+// 流式读 ls-tree：setEncoding('utf8') 走 StringDecoder，跨块的多字节字符（中文路径）不会裂
+function buildPathIndex(repo, rev, entry) {
+  entry.promise = new Promise((resolve, reject) => {
+    const child = spawn(GIT_BIN, ['-c', 'core.quotepath=false', 'ls-tree', '-r', '--name-only', '-z', rev], {
+      cwd: repo,
+      windowsHide: true,
+      env: { ...process.env, GIT_PAGER: 'cat', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' },
+    });
+    let text = '';
+    let total = 0;
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      text += chunk;
+      // \0 是 git 的路径分隔符（路径里不可能出现），数它比 split 整串省一次大数组
+      total += chunk.split('\0').length - 1;
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      if (stderr.length < 4000) stderr += chunk;
+    });
+    child.on('error', (err) => reject(err));
+    child.on('close', (code) => {
+      if (code === 0) {
+        entry.text = text;
+        entry.total = total;
+        entry.at = Date.now();
+        entry.promise = null;
+        resolve(entry);
+      } else {
+        entry.error = (stderr || `git ls-tree 退出码 ${code}`).trim();
+        entry.promise = null;
+        reject(new Error(entry.error));
+      }
+    });
+  });
+  return entry.promise;
+}
+
+// 取索引：已建好且没过期直接用；正在建就把 pending 的 entry 还回去，让调用方轮询
+function ensurePathIndex(repo, rev) {
+  const key = pathIndexKey(repo, rev);
+  const cached = pathIndex.get(key);
+  if (cached && cached.promise) return cached;
+  if (cached && !cached.error && Date.now() - cached.at < PATH_INDEX_TTL) return cached;
+
+  const entry = { text: '', total: 0, at: 0, promise: null, error: null };
+  pathIndex.delete(key);
+  pathIndex.set(key, entry);
+  evictPathIndex();
+  buildPathIndex(repo, rev, entry).catch(() => {
+    /* 失败原因挂在 entry.error 上，由调用方决定怎么报 */
+  });
+  return entry;
+}
+
+const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g;
+
+function countSlashes(s) {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 47) n += 1;
+  return n;
+}
+
+// 在 '\0' 分隔的大字符串里找命中：大小写不敏感用正则 i 标记，避免再造一份小写副本
+// 排序和前端一致：文件名前缀命中 > 文件名包含 > 只命中目录名，同档按目录更浅、路径更短
+function searchPathText(text, rawQuery, limit) {
+  const q = rawQuery.toLowerCase();
+  const re = new RegExp(rawQuery.replace(REGEX_SPECIAL, '\\$&'), 'gi');
+  const cands = [];
+  let total = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const at = m.index;
+    const start = at === 0 ? 0 : text.lastIndexOf('\0', at - 1) + 1;
+    let end = text.indexOf('\0', at);
+    if (end < 0) end = text.length;
+    const p = text.slice(start, end);
+    total += 1;
+    if (cands.length < 4000) {
+      const slash = p.lastIndexOf('/');
+      const name = slash >= 0 ? p.slice(slash + 1) : p;
+      const nameAt = name.toLowerCase().indexOf(q);
+      const rank = nameAt === 0 ? 0 : nameAt >= 0 ? 1 : 2;
+      cands.push({ path: p, score: rank * 1e12 + countSlashes(p) * 1e6 + Math.min(p.length, 999999) });
+      // 命中太多时（比如只打一个字母）分批收口，别让候选数组涨到上百万条
+      if (cands.length === 4000) {
+        cands.sort((a, b) => a.score - b.score);
+        cands.length = 1000;
+      }
+    }
+    re.lastIndex = end + 1; // 一个路径只算一次，顺带跳过路径内的其它命中点
+  }
+  cands.sort((a, b) => a.score - b.score);
+  const items = cands.slice(0, limit).map((c) => c.path);
+  return { total, items, truncated: total > items.length };
+}
+
+async function treeSearch(repo, rawRev, rawQuery, rawLimit) {
+  const rev = safeRev(rawRev) || 'HEAD';
+  const query = String(rawQuery || '').trim();
+  const limit = Math.min(Math.max(Number(rawLimit) || FILE_SEARCH_MAX, 1), FILE_SEARCH_MAX);
+  if (!query) return { state: 'ready', rev, total: 0, items: [], truncated: false };
+
+  const entry = ensurePathIndex(repo, rev);
+  if (entry.promise) return { state: 'building', rev, total: entry.total, items: [], truncated: false };
+  if (entry.error) throw new Error(entry.error);
+
+  const hit = searchPathText(entry.text, query, limit);
+  return { state: 'ready', rev, total: hit.total, items: hit.items, truncated: hit.truncated };
+}
+// prize add by yanliang for 「文件」搜索：服务端流式建索引 + 服务端过滤, 20261026-end
+
 
 function escapeIgnorePattern(p) {
   return p
@@ -667,6 +902,40 @@ async function opIgnore(repo, paths) {
   return `已写入 .git/info/exclude：${added.join(', ')}${tip}`;
 }
 
+// prize add by yanliang for 还原：把路径恢复成 HEAD 版本（暂存区与工作区一起回退）, 20261024-start
+// 语义就是「回到修改之前」：一条 checkout 同时重置 index 和 worktree，
+// 所以已暂存、未暂存、已删除的改动都会被抹掉。新增文件在 HEAD 里不存在，不在还原范围。
+async function opDiscard(repo, paths) {
+  const hasHead = await git(['rev-parse', '--verify', 'HEAD'], repo)
+    .then(() => true)
+    .catch(() => false);
+  if (!hasHead) throw new Error('仓库还没有任何提交，没有可还原的版本');
+
+  // -z 避免中文 / 空格路径被 quotepath 转义后再拆错
+  const listed = await git(['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', ...paths], repo).catch(() => '');
+  const inHead = new Set(
+    String(listed || '')
+      .split('\0')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+
+  const revert = paths.filter((p) => inHead.has(p));
+  const skipped = paths.filter((p) => !inHead.has(p));
+
+  if (!revert.length) {
+    throw new Error(`HEAD 里没有这些路径，无法还原：${skipped.join(', ')}（新增文件请手动删除）`);
+  }
+
+  await git(['checkout', 'HEAD', '--', ...revert], repo);
+
+  if (skipped.length) {
+    return `已还原 ${revert.length} 个路径到 HEAD；新增文件不在还原范围：${skipped.join(', ')}`;
+  }
+  return `已还原 ${revert.length} 个路径到 HEAD`;
+}
+// prize add by yanliang for 还原：把路径恢复成 HEAD 版本（暂存区与工作区一起回退）, 20261024-end
+
 async function runGitOp(repo, op, rawPaths) {
   const list = (Array.isArray(rawPaths) ? rawPaths : [rawPaths])
     .filter((p) => p != null && String(p).trim() !== '')
@@ -678,6 +947,9 @@ async function runGitOp(repo, op, rawPaths) {
   if (op === 'stage') message = await opStage(repo, paths);
   else if (op === 'unstage') message = await opUnstage(repo, paths);
   else if (op === 'ignore') message = await opIgnore(repo, paths);
+  // prize add by yanliang for 工作区改动详情支持还原到 HEAD 版本, 20261024-start
+  else if (op === 'discard') message = await opDiscard(repo, paths);
+  // prize add by yanliang for 工作区改动详情支持还原到 HEAD 版本, 20261024-end
   else throw new Error(`不支持的操作：${op}`);
 
   return { ok: true, op, paths, message };
@@ -845,6 +1117,191 @@ async function readFileHistory(repo, file, limit) {
 }
 // prize add by yanliang for 读取单个文件的历史提交, 20261022-end
 
+// prize add by yanliang for AI 解释：本地旁路存储（.gdv），与 diff 主链路完全隔离, 20261024-start
+// 约定：解释由外部（WorkBuddy）生成，服务端只负责「排队 / 存放 / 展示」，自身不发任何网络请求
+const GDV_INDEX_FILE = '.gdv/explain/index.json';
+const GDV_REQ_DIR = '.gdv/requests';
+// prize add by yanliang for 解释文档改为 v3「源码分段+中文讲解」形态, 20261024-start
+const GDV_TEMPLATE = 'v3';
+// prize add by yanliang for 解释文档改为 v3「源码分段+中文讲解」形态, 20261024-end
+const GDV_RELATED_LIMIT = 3;
+
+function gdvAbs(repo, rel) {
+  return path.resolve(repo, rel);
+}
+
+async function readJsonQuiet(file, fallback) {
+  try {
+    return JSON.parse(await fs.promises.readFile(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+// 先写临时文件再 rename：前端随时可能在读，不能让它拿到半截 JSON
+async function writeJsonAtomic(file, data) {
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  await fs.promises.rename(tmp, file);
+}
+
+async function readExplainIndex(repo) {
+  const raw = await readJsonQuiet(gdvAbs(repo, GDV_INDEX_FILE), null);
+  const entries =
+    raw && typeof raw === 'object' && raw.entries && typeof raw.entries === 'object' ? raw.entries : {};
+  return { version: 1, entries };
+}
+
+// 用工作区内容算 blob 哈希：与 git rev-parse HEAD:path 同值，未改动的文件天然对得上
+async function blobOf(repo, rel) {
+  const out = await git(['hash-object', '--', rel], repo);
+  return String(out || '').trim();
+}
+
+// .gdv 只留在本地，写进 .git/info/exclude，别让它污染「工作区改动」
+async function ensureGdvExcluded(repo) {
+  const relExclude = (await git(['rev-parse', '--git-path', 'info/exclude'], repo)).trim();
+  const file = path.isAbsolute(relExclude) ? relExclude : path.resolve(repo, relExclude);
+  let content = '';
+  try {
+    content = await fs.promises.readFile(file, 'utf8');
+  } catch {
+    content = '';
+  }
+  const lines = content.split(/\r?\n/).map((s) => s.trim());
+  if (lines.includes('.gdv/')) return false;
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  const prefix = content && !content.endsWith('\n') ? '\n' : '';
+  const header = content.includes('# 由 git-diff-viewer 添加') ? '' : '# 由 git-diff-viewer 添加\n';
+  await fs.promises.appendFile(file, `${prefix}${header}.gdv/\n`, 'utf8');
+  return true;
+}
+
+async function listExplainRequests(repo) {
+  const dir = gdvAbs(repo, GDV_REQ_DIR);
+  let names = [];
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const data = await readJsonQuiet(path.join(dir, name), null);
+    if (data && data.id && data.path) out.push(data);
+  }
+  out.sort((a, b) => String(a.requestedAt || '').localeCompare(String(b.requestedAt || '')));
+  return out;
+}
+
+// 单个文件的精确状态：有文档→比对 blob 判过期；无文档→看有没有排队/失败
+async function explainStatusOf(repo, rel) {
+  const blob = await blobOf(repo, rel);
+  const entry = (await readExplainIndex(repo)).entries[rel] || null;
+  const mine = (await listExplainRequests(repo)).filter((r) => r.path === rel);
+  const live = mine.filter((r) => r.status === 'pending' || r.status === 'working').pop() || null;
+  const failed = mine.filter((r) => r.status === 'failed').pop() || null;
+
+  let state = 'none';
+  if (entry) state = entry.blob === blob ? 'ready' : 'stale';
+  else if (live) state = 'pending';
+  else if (failed) state = 'failed';
+
+  return { path: rel, blob, state, entry, request: live || failed, regenerating: !!live && !!entry };
+}
+
+async function createExplainRequest(repo, rawPath) {
+  const rel = safeRelPath(rawPath);
+  if (rel.split('/')[0] === '.git') throw new Error('不解释 .git 目录里的文件');
+  const abs = worktreeFile(repo, rel);
+  const stat = await fs.promises.stat(abs).catch(() => null);
+  if (!stat || !stat.isFile()) throw new Error(`文件不存在或不是普通文件：${rel}`);
+
+  const blob = await blobOf(repo, rel);
+  const entry = (await readExplainIndex(repo)).entries[rel] || null;
+  const requests = await listExplainRequests(repo);
+  const live = requests
+    .filter((r) => r.path === rel && (r.status === 'pending' || r.status === 'working'))
+    .pop();
+
+  // 同一份内容已经解释过、或已经在排队，直接复用，不重复排队
+  if (entry && entry.blob === blob && !live) {
+    return { reused: true, state: 'ready', path: rel, blob, entry };
+  }
+  if (live) return { reused: true, state: 'pending', path: rel, blob, request: live };
+
+  await ensureGdvExcluded(repo);
+
+  const now = new Date().toISOString();
+  const stamp = now.replace(/[-:.TZ]/g, '').slice(0, 14);
+  const id = `${stamp}-${Math.random().toString(36).slice(2, 8)}`;
+  const commit = (await git(['rev-parse', 'HEAD'], repo).catch(() => '')).trim();
+
+  const request = {
+    id,
+    status: 'pending',
+    path: rel,
+    blob,
+    commit: commit ? commit.slice(0, 12) : '',
+    docTarget: `.gdv/explain/${rel}.md`,
+    template: GDV_TEMPLATE,
+    relatedLimit: GDV_RELATED_LIMIT,
+    related: [],
+    requestedAt: now,
+    claimedAt: null,
+    finishedAt: null,
+    error: null,
+  };
+  await writeJsonAtomic(gdvAbs(repo, `${GDV_REQ_DIR}/${id}.json`), request);
+  return { reused: false, state: 'pending', path: rel, blob, request };
+}
+// prize add by yanliang for AI 解释：本地旁路存储（.gdv），与 diff 主链路完全隔离, 20261024-end
+
+// prize add by yanliang for 在系统文件管理器里定位文件，供解释文档顶部的「打开位置」使用, 20261024-start
+// 只在本机回环地址上开放：服务一旦 HOST=0.0.0.0 暴露到局域网，
+// 陌生请求就不该在宿主机的桌面上弹窗
+function isLoopbackRequest(req) {
+  const addr = (req.socket && req.socket.remoteAddress) || '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+async function revealInFileManager(repo, rawPath) {
+  const rel = safeRelPath(rawPath);
+  const abs = worktreeFile(repo, rel);
+  const stat = await fs.promises.stat(abs).catch(() => null);
+  if (!stat) throw new Error(`路径不存在：${rel}`);
+
+  const target = abs;
+  const dir = stat.isDirectory() ? target : path.dirname(target);
+
+  return new Promise((resolve, reject) => {
+    let cmd;
+    let args;
+    if (process.platform === 'win32') {
+      // /select 必须和目标路径拼成同一个参数：空格由 execFile 负责加引号，
+      // 文件名里允许出现 & 之类的字符，所以不能走 exec 拼命令行
+      cmd = 'explorer.exe';
+      args = [`/select,${target}`];
+    } else if (process.platform === 'darwin') {
+      cmd = 'open';
+      args = ['-R', target];
+    } else {
+      cmd = 'xdg-open';
+      args = [dir];
+    }
+    execFile(cmd, args, (err) => {
+      // explorer.exe 即使成功也常返回非 0，只有「命令根本起不来」才算失败
+      if (err && err.code === 'ENOENT') {
+        return reject(new Error(`系统里没有可用的文件管理器命令：${cmd}`));
+      }
+      resolve({ ok: true, path: target, dir });
+    });
+  });
+}
+// prize add by yanliang for 在系统文件管理器里定位文件，供解释文档顶部的「打开位置」使用, 20261024-end
+
 // prize add by yanliang for HTTP 路由与静态资源托管, 20261022-start
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -1011,6 +1468,14 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, await readWorkingTree(repo, ignoreSpace));
     }
     // prize add by yanliang for 单文件内容接口：markdown 预览与图片资源, 20261023-start
+    if (action === 'tree') {
+      return sendJson(res, 200, await readTree(repo, q.get('rev'), q.get('path')));
+    }
+    // prize add by yanliang for 「文件」搜索：全量路径列表, 20261026-start
+    if (action === 'tree-search') {
+      return sendJson(res, 200, await treeSearch(repo, q.get('rev'), q.get('q'), q.get('limit')));
+    }
+    // prize add by yanliang for 「文件」搜索：全量路径列表, 20261026-end
     if (action === 'file') {
       return sendJson(res, 200, await readFileText(repo, q.get('path'), q.get('rev')));
     }
@@ -1035,6 +1500,52 @@ async function handleApi(req, res, urlObj) {
       const limit = Math.min(Number(q.get('limit') || 30), 100);
       return sendJson(res, 200, { commits: await readFileHistory(repo, q.get('file'), limit) });
     }
+
+    // prize add by yanliang for 文件编辑器：保存工作区文件（POST，路径在 JSON 体内）, 20261024-start
+    if (action === 'save-file') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      const body = await readJsonBody(req, 4 * 1024 * 1024);
+      return sendJson(
+        res,
+        200,
+        await saveWorktreeFile(repo, String(body.path || ''), body.content, body.baseMtimeMs)
+      );
+    }
+    // prize add by yanliang for 文件编辑器：保存工作区文件（POST，路径在 JSON 体内）, 20261024-end
+
+    // prize add by yanliang for AI 解释三个接口：状态 / 全量索引 / 发起解释, 20261024-start
+    // 解释文档本身走已有的 /api/file 读取（.gdv 不在 .git 下，readBlob 放行），不另开接口
+    if (action === 'explain-status') {
+      return sendJson(res, 200, await explainStatusOf(repo, safeRelPath(q.get('path'))));
+    }
+    if (action === 'explain-index') {
+      const index = await readExplainIndex(repo);
+      const pending = {};
+      // 按 requestedAt 升序下发，同一文件后发起的覆盖先前的，前端只关心最新一条
+      for (const r of await listExplainRequests(repo)) {
+        if (r.status === 'pending' || r.status === 'working') {
+          pending[r.path] = { id: r.id, requestedAt: r.requestedAt, blob: r.blob };
+        } else if (r.status === 'failed') {
+          pending[r.path] = { id: r.id, requestedAt: r.requestedAt, blob: r.blob, failed: true };
+        }
+      }
+      return sendJson(res, 200, { entries: index.entries, pending });
+    }
+    if (action === 'explain-request') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await createExplainRequest(repo, String(body.path || '')));
+    }
+    // prize add by yanliang for AI 解释三个接口：状态 / 全量索引 / 发起解释, 20261024-end
+
+    // prize add by yanliang for 在文件夹中显示当前文件（解释文档顶部的绝对路径点击）, 20261024-start
+    if (action === 'reveal') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      if (!isLoopbackRequest(req)) throw new Error('只有在运行服务的本机上才能打开文件位置');
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await revealInFileManager(repo, String(body.path || '')));
+    }
+    // prize add by yanliang for 在文件夹中显示当前文件（解释文档顶部的绝对路径点击）, 20261024-end
 
     return sendJson(res, 404, { error: '未知接口' });
   } catch (err) {

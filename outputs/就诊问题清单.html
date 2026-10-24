@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>就诊问题清单 · 左肘关节 CT</title>
+<style>
+  :root{
+    --ink:#1a1d21;
+    --ink-2:#4a5157;
+    --ink-3:#8a9199;
+    --line:#dfe3e6;
+    --accent:#0d7d72;
+    --accent-soft:#eef7f5;
+    --warn:#b3261e;
+    --warn-soft:#fdf2f0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei","Noto Sans SC","Segoe UI",sans-serif;
+    color:var(--ink);
+    background:#eceeef;
+    font-size:13px;
+    line-height:1.62;
+    padding:24px 12px 40px;
+  }
+  .sheet{
+    width:210mm;
+    min-height:297mm;
+    margin:0 auto;
+    background:#fff;
+    padding:14mm 15mm 12mm;
+    box-shadow:0 2px 24px rgba(0,0,0,.10);
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* ---------- header ---------- */
+  .head{
+    display:flex;
+    align-items:flex-start;
+    gap:12px;
+    padding-bottom:11px;
+    border-bottom:2px solid var(--ink);
+  }
+  .head-mark{
+    flex:0 0 auto;
+    width:34px;height:34px;
+    border:2px solid var(--accent);
+    border-radius:9px;
+    color:var(--accent);
+    display:flex;align-items:center;justify-content:center;
+    font-size:17px;font-weight:700;
+    margin-top:2px;
+  }
+  .head-txt h1{
+    font-family:"Source Han Serif SC","Songti SC","SimSun",serif;
+    font-size:24px;
+    letter-spacing:.5px;
+    line-height:1.25;
+    font-weight:700;
+  }
+  .head-txt .sub{
+    margin-top:4px;
+    font-size:12px;
+    color:var(--ink-2);
+    letter-spacing:.2px;
+  }
+  .head-right{
+    margin-left:auto;
+    text-align:right;
+    font-size:11px;
+    color:var(--ink-3);
+    line-height:1.8;
+    padding-top:2px;
+    white-space:nowrap;
+  }
+
+  /* ---------- meta ---------- */
+  .meta{
+    display:flex;
+    flex-wrap:wrap;
+    gap:0 26px;
+    padding:9px 0 10px;
+    font-size:12px;
+    color:var(--ink-2);
+    border-bottom:1px solid var(--line);
+  }
+  .meta b{font-weight:600;color:var(--ink);}
+  .blank{display:inline-block;min-width:62px;border-bottom:1px solid #c6ccd1;height:14px;vertical-align:-2px;}
+
+  /* ---------- section ---------- */
+  .sec{margin-top:14px;}
+  .sec-title{
+    display:flex;align-items:center;gap:8px;
+    font-size:12px;font-weight:700;letter-spacing:1.6px;
+    color:var(--accent);
+    margin-bottom:7px;
+  }
+  .sec-title .rule{flex:1;height:1px;background:var(--line);}
+  .sec-title .tag{
+    font-size:10px;letter-spacing:.6px;color:var(--ink-3);font-weight:500;
+  }
+
+  /* report list */
+  ol.report{list-style:none;}
+  ol.report li{
+    display:flex;gap:9px;
+    padding:5px 0;
+    border-bottom:1px dashed #e8ebed;
+  }
+  ol.report li:last-child{border-bottom:none;}
+  ol.report .n{
+    flex:0 0 auto;width:17px;height:17px;
+    border:1px solid #c6ccd1;border-radius:50%;
+    font-size:10px;color:var(--ink-2);
+    display:flex;align-items:center;justify-content:center;
+    margin-top:3px;
+    font-variant-numeric:tabular-nums;
+  }
+  ol.report .t{flex:1;}
+
+  /* callout */
+  .callout{
+    margin-top:9px;
+    background:var(--accent-soft);
+    border-left:3px solid var(--accent);
+    border-radius:0 6px 6px 0;
+    padding:9px 12px;
+    font-size:12.5px;
+    color:#0a4f49;
+  }
+  .callout .k{font-weight:700;}
+
+  /* questions */
+  .q{
+    padding:7px 0 8px;
+    border-bottom:1px solid #eef0f2;
+    break-inside:avoid;
+  }
+  .q:last-child{border-bottom:none;}
+  .q-h{display:flex;gap:9px;align-items:baseline;}
+  .q-h .idx{
+    flex:0 0 auto;
+    font-size:11px;font-weight:700;color:var(--accent);
+    font-variant-numeric:tabular-nums;
+    padding-top:1px;
+  }
+  .q-h .txt{font-size:12.8px;}
+  .q-a{
+    margin:5px 0 0 24px;
+    border-bottom:1px dotted #c6ccd1;
+    height:17px;
+  }
+  .q-a + .q-a{margin-top:2px;}
+
+  /* warn list */
+  ul.warn{list-style:none;display:flex;flex-wrap:wrap;gap:5px 8px;}
+  ul.warn li{
+    font-size:11.5px;
+    background:var(--warn-soft);
+    color:#8c1d17;
+    border:1px solid #f2d5d1;
+    border-radius:4px;
+    padding:2px 8px;
+  }
+
+  .todo{display:flex;flex-direction:column;gap:5px;}
+  .todo .row{display:flex;gap:9px;font-size:12.3px;}
+  .todo .dot{
+    flex:0 0 auto;width:5px;height:5px;border-radius:50%;
+    background:var(--accent);margin-top:8px;
+  }
+
+  /* footer */
+  .foot{
+    margin-top:auto;
+    padding-top:12px;
+    border-top:1px solid var(--line);
+    font-size:10.5px;
+    color:var(--ink-3);
+    line-height:1.7;
+    display:flex;
+    gap:16px;
+    align-items:flex-end;
+  }
+  .foot .sig{margin-left:auto;text-align:right;white-space:nowrap;}
+
+  .hint{
+    width:210mm;margin:0 auto 14px;
+    font-size:11.5px;color:#6b7278;text-align:center;
+  }
+  .hint kbd{
+    font-family:inherit;font-size:11px;
+    border:1px solid #c6ccd1;border-radius:3px;
+    padding:0 4px;background:#f7f8f9;
+  }
+
+  @media print{
+    body{background:#fff;padding:0;font-size:12.5px;}
+    .sheet{width:auto;min-height:auto;box-shadow:none;padding:0;}
+    .hint{display:none;}
+    @page{size:A4 portrait;margin:13mm 14mm;}
+    .sec{break-inside:avoid;}
+  }
+</style>
+</head>
+<body>
+
+<div class="hint">按 <kbd>Ctrl</kbd> + <kbd>P</kbd> 可直接打印为 A4（建议横向留白 100%，不必缩放）</div>
+
+<div class="sheet">
+
+  <!-- header -->
+  <div class="head">
+    <div class="head-mark">诊</div>
+    <div class="head-txt">
+      <h1>就诊问题清单</h1>
+      <div class="sub">左肘关节 CT 复查 · 面诊时请医生逐条确认</div>
+    </div>
+    <div class="head-right">
+      报告日期 2026-10-24<br>
+      报告机构 武汉关东普度医院
+    </div>
+  </div>
+
+  <!-- meta -->
+  <div class="meta">
+    <span><b>患儿</b> <span class="blank"></span></span>
+    <span><b>性别</b> 女</span>
+    <span><b>年龄</b> 5 岁</span>
+    <span><b>检查部位</b> 左肘关节</span>
+    <span><b>就诊科室</b> <span class="blank"></span></span>
+  </div>
+
+  <!-- 1 报告结论 -->
+  <div class="sec">
+    <div class="sec-title">一 · 报告已写明<span class="rule"></span><span class="tag">CT 意见三条</span></div>
+    <ol class="report">
+      <li><span class="n">1</span><span class="t">左尺骨上段至尺骨鹰嘴<b>骨折</b>。</span></li>
+      <li><span class="n">2</span><span class="t">左尺桡骨下段骨质欠规整，<b>考虑运动伪影</b>，结合临床。</span></li>
+      <li><span class="n">3</span><span class="t">部分隐匿性骨折／迟发性损伤早期不显影，<b>建议进一步检查或隔期复查</b>。</span></li>
+    </ol>
+    <div class="callout">
+      <span class="k">影像所见中的关键描述：</span>左肘关节间隙良好、<b>对合关系完整</b>；断端<b>对位尚可</b>；软组织稍肿胀。
+      这三句说明目前未见明显错位、关节对合关系完整，属相对有利信息；
+      <b>但"是否需要手术"须由医生结合查体、原始影像与功能评估决定，本卡片不作判断。</b>
+    </div>
+  </div>
+
+  <!-- 2 问医生 -->
+  <div class="sec">
+    <div class="sec-title">二 · 请医生逐条回答<span class="rule"></span><span class="tag">可直接在横线上记答案</span></div>
+
+    <div class="q">
+      <div class="q-h"><span class="idx">01</span><span class="txt">是否为<b>关节内骨折</b>？关节面有无台阶、塌陷或移位？</span></div>
+      <div class="q-a"></div>
+    </div>
+
+    <div class="q">
+      <div class="q-h"><span class="idx">02</span><span class="txt">有无成角或移位？是否会影响以后肘关节屈伸、前臂旋转功能？</span></div>
+      <div class="q-a"></div>
+    </div>
+
+    <div class="q">
+      <div class="q-h"><span class="idx">03</span><span class="txt">目前手指活动、感觉、脉搏是否正常？有无神经血管受压风险？</span></div>
+      <div class="q-a"></div>
+    </div>
+
+    <div class="q">
+      <div class="q-h"><span class="idx">04</span><span class="txt">若保守治疗（石膏／支具），需固定多久、多久复查一次影像、什么情况下必须改手术？</span></div>
+      <div class="q-a"></div>
+      <div class="q-a"></div>
+    </div>
+
+    <div class="q">
+      <div class="q-h"><span class="idx">05</span><span class="txt">5 岁儿童骨改建能力强，这一点会让您更倾向保守还是手术？</span></div>
+      <div class="q-a"></div>
+    </div>
+
+    <div class="q">
+      <div class="q-h"><span class="idx">06</span><span class="txt">是否需要补拍 X 光／健侧对比，或做 MRI 进一步看软骨与骺板？下次复查定在什么时候？</span></div>
+      <div class="q-a"></div>
+    </div>
+  </div>
+
+  <!-- 3 立刻就医信号 -->
+  <div class="sec">
+    <div class="sec-title">三 · 出现以下任一情况请立即就医<span class="rule"></span><span class="tag">不要等到复查日</span></div>
+    <ul class="warn">
+      <li>手指发麻或感觉异常</li>
+      <li>手指发白、发凉</li>
+      <li>疼痛突然加重</li>
+      <li>肿胀迅速加重</li>
+      <li>石膏／支具过紧或松动</li>
+      <li>患肢完全无法活动</li>
+    </ul>
+  </div>
+
+  <!-- 4 眼下两件事 -->
+  <div class="sec">
+    <div class="sec-title">四 · 眼下两件事<span class="rule"></span></div>
+    <div class="todo">
+      <div class="row"><span class="dot"></span><span><b>尽快面诊</b>小儿骨科／创伤骨科，务必带上<b>原始 CT 影像</b>（胶片或电子影像），不只是这张纸质报告。</span></div>
+      <div class="row"><span class="dot"></span><span><b>固定患肢</b>，途中不要反复掰动、不要揉、不要热敷。</span></div>
+    </div>
+  </div>
+
+  <!-- footer -->
+  <div class="foot">
+    <div>本卡片仅整理报告原文并提供提问要点，<b>不构成任何医疗建议或诊断意见</b>。<br>诊疗方案以接诊医生面诊结论为准。</div>
+    <div class="sig">整理日期 2026-10-26</div>
+  </div>
+
+</div>
+
+</body>
+</html>
