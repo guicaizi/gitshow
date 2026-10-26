@@ -2372,6 +2372,38 @@ td.code .marker {
   animation: bnode-flash 1.5s ease-out;
 }
 
+/* prize add by yanliang for 源码跳转：详情头「返回」按钮（有历史才亮起）, 20261026-start */
+.btn.tiny.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0 7px;
+  color: var(--text-2);
+}
+
+.btn.tiny.back-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 没有历史时灰掉但仍占位，避免头部元素左右跳动 */
+.btn.tiny.back-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 有历史时左侧加一个小圆点，扫一眼就知道"可以退" */
+.btn.tiny.back-btn:not(:disabled)::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+/* prize add by yanliang for 源码跳转：详情头「返回」按钮（有历史才亮起）, 20261026-end */
+
 @keyframes bnode-flash {
   0%,
   55% {
@@ -2454,3 +2486,230 @@ mark.fhit {
   border-radius: 2px;
 }
 /* prize add by yanliang for 「文件」搜索框与命中列表, 20261026-end */
+
+/* prize add by yanliang for 源码跳转：Ctrl 手型提示、命中行高亮、候选浮层, 20261026-start */
+.file-view { position: relative; }
+
+/* 命中行：pre 里没法给单行加背景，用一层绝对定位的色块盖上去 */
+.jump-hl {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(255, 196, 0, .18);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity .12s ease-out;
+}
+
+.jump-hl.on { opacity: 1; }
+
+/* 按住 Ctrl / Cmd 时，代码区光标变手型，暗示可以点 */
+body.jump-ready .fv-code { cursor: pointer; }
+
+.jump-list {
+  position: fixed;
+  z-index: 300;
+  min-width: 280px;
+  max-width: min(760px, 90vw);
+  max-height: 48vh;
+  overflow: auto;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.jump-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 9px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.jump-item:hover { background: var(--bg-hover); }
+
+.jump-kind { flex: none; font-size: 10.5px; color: var(--text-3); }
+.jump-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+.jump-line { flex: none; font-family: var(--mono); color: var(--text-3); }
+.jump-tag { flex: none; font-size: 10.5px; color: var(--text-3); }
+/* prize add by yanliang for 源码跳转：Ctrl 手型提示、命中行高亮、候选浮层, 20261026-end */
+
+/* prize add by yanliang for 纯源码模式 ?mode=source：只留仓库框 + 文件树 + 代码, 20261026-start */
+/* 提交列表、比对工具条、改动页签、编辑/解释入口在这里一概不出现 */
+body.mode-source .sidebar,
+body.mode-source .resizer,
+body.mode-source .compare-bar,
+body.mode-source #commitHead,
+body.mode-source #diffToolbar,
+body.mode-source .pane-head-row,
+body.mode-source #editBtn,
+body.mode-source #explainBtn,
+body.mode-source #search {
+  display: none;
+}
+
+/* 文件树是这个模式下的主要入口，比普通模式宽一些；只影响本模式，不动全局变量 */
+body.mode-source .file-pane {
+  width: max(var(--filepane-w, 268px), 300px);
+}
+
+/* 顶部让仓库路径框占满剩余空间，视线集中在一处 */
+body.mode-source .repo-open { flex: 1; max-width: 820px; }
+/* prize add by yanliang for 纯源码模式 ?mode=source：只留仓库框 + 文件树 + 代码, 20261026-end */
+
+/* prize add by yanliang for 问 AI：代码区右上悬浮按钮 + Harness 地址配置浮层, 20261026-start */
+.ai-fab {
+  position: absolute;
+  /* 详情头高 35px，往下让开，别压住头部的「编辑 / 解释 / 定位」 */
+  top: 44px;
+  right: 12px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px 0 4px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  opacity: .72;
+  transition: opacity .15s, color .15s, border-color .15s;
+}
+
+.ai-fab:hover {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 小方形标记，比纯文字更容易一眼认出是"AI" */
+.ai-fab-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+.ai-fab-txt {
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+
+/* 配置浮层：跟着按钮定位，属于临时面板，用 fixed 避免被滚动容器裁掉 */
+.ai-setup {
+  position: fixed;
+  z-index: 30;
+  width: 330px;
+  padding: 12px 13px 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.ai-setup-title {
+  margin-bottom: 8px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-setup-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--bg-sub);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.ai-setup-input:focus {
+  border-color: var(--accent);
+}
+
+.ai-setup-tip {
+  margin: 7px 0 9px;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+.ai-setup-tip code {
+  padding: 1px 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+
+.ai-setup-ops {
+  display: flex;
+  gap: 8px;
+}
+/* prize add by yanliang for 问 AI：代码区右上悬浮按钮 + Harness 地址配置浮层, 20261026-end */
+
+/* prize add by yanliang for 问 AI：自动复制失败时的手动复制浮层, 20261026-start */
+.ai-fallback {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 560px;
+  max-width: calc(100vw - 40px);
+}
+
+.ai-fallback-text {
+  width: 100%;
+  height: 190px;
+  margin-bottom: 10px;
+  padding: 8px 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-2);
+  background: var(--bg-sub);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+  outline: none;
+}
+
+.ai-fallback-text:focus {
+  border-color: var(--accent);
+}
+/* prize add by yanliang for 问 AI：自动复制失败时的手动复制浮层, 20261026-end */

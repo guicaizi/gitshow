@@ -14,6 +14,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
+// prize add by yanliang for 源码跳转：逻辑单独放一个文件，这里只做依赖注入, 20261026-start
+const { createJump } = require('./server-jump');
+// prize add by yanliang for 源码跳转：逻辑单独放一个文件，这里只做依赖注入, 20261026-end
 
 // prize add by yanliang for 新增 git 可执行文件探测, 20261022-start
 const GIT_CANDIDATES = [
@@ -599,6 +602,10 @@ async function readFileText(repo, rawPath, rawRev) {
   };
 }
 // prize add by yanliang for 读取单个文件内容，供 markdown / 图片在线预览, 20261023-end
+
+// prize add by yanliang for 源码跳转：把 git 读写能力注入给独立模块, 20261026-start
+const jumpTo = createJump({ git, readFileText, safeRelPath, safeRev });
+// prize add by yanliang for 源码跳转：把 git 读写能力注入给独立模块, 20261026-end
 
 // prize add by yanliang for 文件编辑器：把工作区文本文件写回磁盘, 20261024-start
 // 定位是「就地改一个已有文件」，不负责新建 / 删除 / 改权限，越界的事一概不做。
@@ -1476,6 +1483,13 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, await treeSearch(repo, q.get('rev'), q.get('q'), q.get('limit')));
     }
     // prize add by yanliang for 「文件」搜索：全量路径列表, 20261026-end
+    // prize add by yanliang for 源码跳转：Ctrl+Click 找定义（只支持 Java / Kotlin）, 20261026-start
+    if (action === 'jump') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await jumpTo(repo, body));
+    }
+    // prize add by yanliang for 源码跳转：Ctrl+Click 找定义（只支持 Java / Kotlin）, 20261026-end
     if (action === 'file') {
       return sendJson(res, 200, await readFileText(repo, q.get('path'), q.get('rev')));
     }

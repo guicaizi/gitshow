@@ -109,6 +109,9 @@ const state = {
   // prize add by yanliang for AI 解释：索引、排队状态与右侧解释视图, 20261024-end
   // prize add by yanliang for 仓库文件树浏览：改动 / 文件 两种左栏模式, 20261023-start
   browse: localStorage.getItem('gdv.browse') === 'files' ? 'files' : 'changes',
+  // prize add by yanliang for 纯源码模式 ?mode=source：只留文件树 + 代码 + 跳转, 20261026-start
+  sourceMode: false,
+  // prize add by yanliang for 纯源码模式 ?mode=source：只留文件树 + 代码 + 跳转, 20261026-end
   browseSel: '',
   browseToken: 0,
   treeCache: new Map(),
@@ -2326,6 +2329,7 @@ async function renderBrowseFile() {
   pane.classList.remove('split-mode');
   pane.innerHTML = `
     <div class="diff-pane-head" data-file="${esc(path)}">
+      <button class="btn tiny back-btn" id="jumpBackBtn" disabled title="回到上一个跳转位置（Alt+←）">← 返回</button>
       <span class="pane-file-path" title="${esc(absOf(path) || path)}">${esc(path)}</span>
       <button class="btn tiny locate-btn" id="locateBtn" title="在左侧文件树中展开并定位到这个文件">${REVEAL_ICON}<span>定位</span></button>
       <button class="btn tiny icon-only" id="locateDiskBtn" title="在系统文件管理器中显示这个文件">↗</button>
@@ -2915,6 +2919,12 @@ async function openRepo(path, opts) {
     showEmpty('选择一个提交', '查看它改动了哪些文件、每一行的增删，也可以勾选两个提交做跨版本比对。');
 
     await loadCommits(true);
+    // prize add by yanliang for 纯源码模式：打开仓库后直接进工作区文件视图, 20261026-start
+    if (state.sourceMode) {
+      state.browse = 'files';
+      await openWorkingTree();
+    }
+    // prize add by yanliang for 纯源码模式：打开仓库后直接进工作区文件视图, 20261026-end
     return true;
   } catch (err) {
     state.repo = prevRepo;
@@ -4108,6 +4118,16 @@ async function init() {
     state.theme = params.get('theme');
   }
   if (params.get('wrap') === '1') state.wrap = true;
+
+  // prize add by yanliang for 纯源码模式：?mode=source 只保留文件树 + 代码 + 跳转, 20261026-start
+  if (params.get('mode') === 'source') {
+    state.sourceMode = true;
+    // 直接盖掉 localStorage 里的选择：这个模式下「改动」一概不显示
+    state.browse = 'files';
+    document.body.classList.add('mode-source');
+    document.title = '源码浏览';
+  }
+  // prize add by yanliang for 纯源码模式：?mode=source 只保留文件树 + 代码 + 跳转, 20261026-end
 
   applyTheme();
   const savedWidth = localStorage.getItem('gdv.sidebar');
