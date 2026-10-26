@@ -78,6 +78,10 @@ const state = {
   skip: 0,
   hasMore: false,
   loadingCommits: false,
+  // prize add by yanliang for 提交列表过滤：查询词与筛出的条数, 20261027-start
+  search: '',
+  shownCount: 0,
+  // prize add by yanliang for 提交列表过滤：查询词与筛出的条数, 20261027-end
   active: null,        // 当前打开的条目
   detail: null,
   view: localStorage.getItem('gdv.view') || 'split',
@@ -109,6 +113,9 @@ const state = {
   // prize add by yanliang for AI 解释：索引、排队状态与右侧解释视图, 20261024-end
   // prize add by yanliang for 仓库文件树浏览：改动 / 文件 两种左栏模式, 20261023-start
   browse: localStorage.getItem('gdv.browse') === 'files' ? 'files' : 'changes',
+  // prize add by yanliang for 纯源码模式 ?mode=source：只留文件树 + 代码 + 跳转, 20261026-start
+  sourceMode: false,
+  // prize add by yanliang for 纯源码模式 ?mode=source：只留文件树 + 代码 + 跳转, 20261026-end
   browseSel: '',
   browseToken: 0,
   treeCache: new Map(),
@@ -1033,6 +1040,56 @@ async function renderMdPreview(path) {
 }
 // prize add by yanliang for markdown 在线预览：轻量渲染器（零依赖，先转义再套语法）, 20261023-end
 
+// prize add by yanliang for 超大提交：整份补丁读不出来时用 numstat 的清单顶上，点文件再单读, 20261028-start
+// 根提交（仓库第一次导入）动辄上万个文件、上百 MB 补丁，服务端会读爆缓冲，
+// 这里只拿「路径 + 增删行数」先把左栏树撑起来，右侧选中哪个文件才去读那个文件的 diff。
+function lazyFilesFromNumstat(d) {
+  const root = !(d.parents || []).length;
+  return (d.files || []).map((x) => ({
+    oldPath: x.path,
+    newPath: x.path,
+    path: x.path,
+    // 根提交里的文件都是新增；其它情况没有状态信息，按修改处理
+    status: root ? 'A' : 'M',
+    binary: !!x.binary,
+    hunks: [],
+    additions: x.additions,
+    deletions: x.deletions,
+    header: '',
+    mode: langProfile(x.path),
+    lazy: !x.binary,
+  }));
+}
+
+async function ensureFilePatch(f) {
+  const d = state.detail;
+  if (!f || !f.lazy || f.patchLoading || !d || d.kind !== 'commit') return;
+  f.patchLoading = true;
+  try {
+    const res = await api('file-diff', {
+      hash: d.hash,
+      path: f.path,
+      ignoreSpace: state.ignoreSpace ? '1' : '0',
+    });
+    const one = parsePatch(res.patch || '')[0];
+    if (one) {
+      f.hunks = one.hunks;
+      f.status = one.status || f.status;
+      f.binary = one.binary;
+      f.additions = one.additions;
+      f.deletions = one.deletions;
+    }
+    f.lazy = false;
+  } catch (err) {
+    f.lazy = false;
+    f.loadError = err.message || '读取失败';
+  } finally {
+    f.patchLoading = false;
+    if (state.selected === f.path) renderSelectedFile();
+  }
+}
+// prize add by yanliang for 超大提交：整份补丁读不出来时用 numstat 的清单顶上，点文件再单读, 20261028-end
+
 function renderSelectedFile() {
   const pane = $('#diffPane');
   if (!pane) return;
@@ -1046,7 +1103,17 @@ function renderSelectedFile() {
   // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-start
   const md = isMarkdown(f.path);
   const mdMode = md && state.mdPreview;
-  const body = mdMode ? '<div class="md-loading">加载文档…</div>' : diffBodyHtml(f);
+  // prize add by yanliang for 超大提交里未加载的文件先显示占位，等它的补丁回来再重绘, 20261028-start
+  const pending = !!f.lazy && !f.hunks.length;
+  const body = mdMode
+    ? '<div class="md-loading">加载文档…</div>'
+    : pending
+      ? '<div class="skeleton">正在读取这个文件的改动…</div>'
+      : f.loadError
+        ? `<div class="skeleton">读取这个文件的改动失败：${esc(f.loadError)}</div>`
+        : diffBodyHtml(f);
+  if (pending) ensureFilePatch(f);
+  // prize add by yanliang for 超大提交里未加载的文件先显示占位，等它的补丁回来再重绘, 20261028-end
   const mdBtn = md
     ? `<button class="btn tiny md-toggle${mdMode ? ' on' : ''}" id="mdToggle" title="${
         mdMode ? '显示这个文件的逐行改动' : '把文档渲染成排版后的样子'
@@ -2326,6 +2393,7 @@ async function renderBrowseFile() {
   pane.classList.remove('split-mode');
   pane.innerHTML = `
     <div class="diff-pane-head" data-file="${esc(path)}">
+      <button class="btn tiny back-btn" id="jumpBackBtn" disabled title="回到上一个跳转位置（Alt+←）">← 返回</button>
       <span class="pane-file-path" title="${esc(absOf(path) || path)}">${esc(path)}</span>
       <button class="btn tiny locate-btn" id="locateBtn" title="在左侧文件树中展开并定位到这个文件">${REVEAL_ICON}<span>定位</span></button>
       <button class="btn tiny icon-only" id="locateDiskBtn" title="在系统文件管理器中显示这个文件">↗</button>
@@ -2511,7 +2579,9 @@ function renderDiff() {
   }
   // prize add by yanliang for 换了版本才清文件树缓存，同一版本内刷新保持展开状态, 20261023-end
 
-  const files = parsePatch(d.patch || '');
+  // prize add by yanliang for 超大补丁失败时改用 numstat 清单，避免误报「没有文件改动」, 20261028-start
+  const files = d.patchError ? lazyFilesFromNumstat(d) : parsePatch(d.patch || '');
+  // prize add by yanliang for 超大补丁失败时改用 numstat 清单，避免误报「没有文件改动」, 20261028-end
   const live = d.kind === 'working';
   const statusMap = d.status || {};
 
@@ -2615,6 +2685,7 @@ function renderToolbar() {
         : ''
       // prize add by yanliang for 工作区视图提供整棵树的一键暂存/取消暂存, 20261022-end
     }
+    ${state.detail && state.detail.patchError ? `<span class="fact tag-warn" title="整份补丁超过服务端读取上限，点开文件才会读取它的改动">补丁过大 · 按文件加载</span>` : ''}
     <span class="fact">${count} 个文件 <span class="stat-add">+${add}</span> <span class="stat-del">-${del}</span></span>
   `;
 }
@@ -2767,6 +2838,55 @@ function commitItemHtml(c, idx) {
   </li>`;
 }
 
+// prize add by yanliang for 提交列表过滤：查询词记在 state 里，每次重绘后自动重新生效, 20261027-start
+// 原来只对整个 .commit-item 改 display，列表一重绘（点提交、勾比对、滚动加载）就丢了过滤，
+// 现在把查询词存进 state.search，重绘完立刻按它重新筛一遍。
+function commitMatchText(c) {
+  if (!c) return '';
+  return [c.subject, c.author, c.email, c.short, c.hash, (c.refs || []).join(' ')]
+    .join(' ')
+    .toLowerCase();
+}
+
+function applyCommitFilter() {
+  const q = (state.search || '').toLowerCase();
+  let shown = 0;
+  document.querySelectorAll('#commitList .commit-item').forEach((item) => {
+    let ok;
+    if (!q) ok = true;
+    // 工作区改动没有作者，过滤时先收起来，免得混在某个作者的结果里
+    else if (item.dataset.worktree) ok = false;
+    else ok = commitMatchText(state.commits[Number(item.dataset.idx)]).includes(q);
+    item.style.display = ok ? '' : 'none';
+    if (ok) shown += 1;
+  });
+  state.shownCount = shown;
+  return shown;
+}
+
+function updateListFoot() {
+  const foot = $('#listFoot');
+  if (!foot) return;
+  if (state.loadingCommits) {
+    foot.textContent = '加载中…';
+    return;
+  }
+  if (state.search) {
+    // 过滤状态下说清「筛出几条 / 一共加载了几条」，剩下的还可以点或滚着继续加载
+    const more = state.hasMore ? ' · 点这里或在列表里滚动继续加载' : '';
+    foot.textContent = `匹配 ${state.shownCount || 0} / 已加载 ${state.commits.length}${more}`;
+    foot.classList.toggle('can-more', !!state.hasMore);
+    return;
+  }
+  foot.classList.remove('can-more');
+  foot.textContent = state.hasMore
+    ? '滚动加载更多'
+    : state.commits.length
+      ? `共 ${state.commits.length} 个提交`
+      : '';
+}
+// prize add by yanliang for 提交列表过滤：查询词记在 state 里，每次重绘后自动重新生效, 20261027-end
+
 function renderCommitList() {
   const list = $('#commitList');
   const worktreeItem = `<li class="commit-item worktree${
@@ -2778,16 +2898,28 @@ function renderCommitList() {
 
   const hasWorktree = state.info && state.info.dirtyCount > 0;
   list.innerHTML = (hasWorktree ? worktreeItem : '') + state.commits.map((c, i) => commitItemHtml(c, i)).join('');
-  $('#listFoot').textContent = state.loadingCommits
-    ? '加载中…'
-    : state.commits.length
-      ? state.hasMore
-        ? '滚动加载更多'
-        : `共 ${state.commits.length} 个提交`
-      : '';
+  // prize add by yanliang for 提交列表过滤：重绘后立刻恢复过滤, 20261027-start
+  applyCommitFilter();
+  updateListFoot();
+  // prize add by yanliang for 提交列表过滤：重绘后立刻恢复过滤, 20261027-end
 }
 
 /* ---------------- 仓库信息 ---------------- */
+// prize add by yanliang for 标题跟着项目名走：顶栏品牌 + 浏览器标签页都换掉, 20261027-start
+// 多开几个标签页时全是「Git 提交比对」分不清，现在打开仓库后显示仓库名，没打开就退回原名。
+function syncTitle() {
+  const name = state.info && state.info.name ? state.info.name : '';
+  const brand = $('#brandName');
+  if (brand) {
+    brand.textContent = name || 'Git 提交比对';
+    // 名字长的时候靠 CSS 省略号截断，完整名字放到 title 里
+    brand.title = name ? `${name}\n${state.info.repo}` : 'Git 提交比对';
+  }
+  if (state.sourceMode) document.title = name ? `${name} · 源码浏览` : '源码浏览';
+  else document.title = name ? `${name} · Git 提交比对` : 'Git 提交比对';
+}
+// prize add by yanliang for 标题跟着项目名走：顶栏品牌 + 浏览器标签页都换掉, 20261027-end
+
 function renderRepoCard() {
   const info = state.info;
   const card = $('#repoCard');
@@ -2843,9 +2975,23 @@ async function loadCommits(reset) {
     $('#listFoot').textContent = '加载失败';
   } finally {
     state.loadingCommits = false;
-    $('#listFoot').textContent = state.hasMore ? '滚动加载更多' : `共 ${state.commits.length} 个提交`;
+    // prize add by yanliang for 加载结束后底部提示按过滤状态重算, 20261027-start
+    updateListFoot();
+    // prize add by yanliang for 加载结束后底部提示按过滤状态重算, 20261027-end
   }
 }
+
+// prize add by yanliang for 过滤词也写进地址栏，刷新 / 换分支后还能保持同一个作者, 20261027-start
+function syncSearchUrl(q) {
+  try {
+    const url = new URL(location.href);
+    if (q) url.searchParams.set('q', q);
+    else url.searchParams.delete('q');
+    const search = url.searchParams.toString().replace(/%2F/g, '/');
+    history.replaceState(null, '', url.pathname + (search ? '?' + search : '') + url.hash);
+  } catch (e) {}
+}
+// prize add by yanliang for 过滤词也写进地址栏，刷新 / 换分支后还能保持同一个作者, 20261027-end
 
 // prize add by yanliang for 换仓库后同步地址栏，避免刷新时 URL 参数把刚选的仓库覆盖回去, 20261023-start
 function syncRepoUrl(repo) {
@@ -2881,6 +3027,9 @@ async function openRepo(path, opts) {
     state.repo = info.repo;
     state.info = info;
     localStorage.setItem('gdv.repo', state.repo);
+    // prize add by yanliang for 打开仓库后顶栏标题与标签页换成项目名, 20261027-start
+    syncTitle();
+    // prize add by yanliang for 打开仓库后顶栏标题与标签页换成项目名, 20261027-end
     // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-start
     if (syncUrl) syncRepoUrl(state.repo);
     // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-end
@@ -2915,11 +3064,20 @@ async function openRepo(path, opts) {
     showEmpty('选择一个提交', '查看它改动了哪些文件、每一行的增删，也可以勾选两个提交做跨版本比对。');
 
     await loadCommits(true);
+    // prize add by yanliang for 纯源码模式：打开仓库后直接进工作区文件视图, 20261026-start
+    if (state.sourceMode) {
+      state.browse = 'files';
+      await openWorkingTree();
+    }
+    // prize add by yanliang for 纯源码模式：打开仓库后直接进工作区文件视图, 20261026-end
     return true;
   } catch (err) {
     state.repo = prevRepo;
     // 之前已经打开过仓库时保留原视图，只提示错误；首次打开失败则回空态
     if (!state.info) renderRepoCard();
+    // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-start
+    syncTitle();
+    // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-end
     toast(err.message, true);
     return false;
   }
@@ -3079,6 +3237,13 @@ async function openCommit(hash) {
 
     const detail = await api('commit', { hash, ignoreSpace: state.ignoreSpace ? '1' : '0' });
     state.detail = detail;
+    // prize add by yanliang for 补丁过大时明确说一句，免得以为提交是空的, 20261028-start
+    if (detail.patchError === 'too-large') {
+      toast('这次提交的补丁太大，改成按文件加载：点开文件才读取它的改动');
+    } else if (detail.patchError) {
+      toast('整份补丁读取失败，改成按文件加载', true);
+    }
+    // prize add by yanliang for 补丁过大时明确说一句，免得以为提交是空的, 20261028-end
     state.active = { hash: detail.hash, kind: 'commit' };
     state.selected = '';
     // prize add by yanliang for 切换提交时重置目录折叠状态, 20261022-start
@@ -3581,11 +3746,12 @@ function bindEvents() {
   });
 
   $('#search').addEventListener('input', (e) => {
-    const q = e.target.value.trim().toLowerCase();
-    document.querySelectorAll('.commit-item').forEach((item) => {
-      const text = item.textContent.toLowerCase();
-      item.style.display = !q || text.includes(q) ? '' : 'none';
-    });
+    // prize add by yanliang for 过滤词存进 state，列表重绘后不再被清空, 20261027-start
+    state.search = e.target.value.trim().toLowerCase();
+    applyCommitFilter();
+    updateListFoot();
+    syncSearchUrl(state.search);
+    // prize add by yanliang for 过滤词存进 state，列表重绘后不再被清空, 20261027-end
   });
 
   $('#themeToggle').addEventListener('click', () => {
@@ -3621,6 +3787,12 @@ function bindEvents() {
       loadCommits(false);
     }
   });
+
+  // prize add by yanliang for 过滤后可能一条都不剩、列表滚不动，底部那行也能点着继续加载, 20261027-start
+  $('#listFoot').addEventListener('click', () => {
+    if (state.hasMore && !state.loadingCommits) loadCommits(false);
+  });
+  // prize add by yanliang for 过滤后可能一条都不剩、列表滚不动，底部那行也能点着继续加载, 20261027-end
 
   $('#runCompare').addEventListener('click', () => {
     if (state.compare.length === 2) openComparison(state.compare[0], state.compare[1]);
@@ -4109,6 +4281,18 @@ async function init() {
   }
   if (params.get('wrap') === '1') state.wrap = true;
 
+  // prize add by yanliang for 纯源码模式：?mode=source 只保留文件树 + 代码 + 跳转, 20261026-start
+  if (params.get('mode') === 'source') {
+    state.sourceMode = true;
+    // 直接盖掉 localStorage 里的选择：这个模式下「改动」一概不显示
+    state.browse = 'files';
+    document.body.classList.add('mode-source');
+    // prize add by yanliang for 源码模式的标题也走统一入口，打开仓库后会带上项目名, 20261027-start
+    syncTitle();
+    // prize add by yanliang for 源码模式的标题也走统一入口，打开仓库后会带上项目名, 20261027-end
+  }
+  // prize add by yanliang for 纯源码模式：?mode=source 只保留文件树 + 代码 + 跳转, 20261026-end
+
   applyTheme();
   const savedWidth = localStorage.getItem('gdv.sidebar');
   if (savedWidth) document.documentElement.style.setProperty('--sidebar-w', savedWidth + 'px');
@@ -4120,6 +4304,14 @@ async function init() {
   bindEvents();
   state.filter = '';
   renderCompareBar();
+
+  // prize add by yanliang for 地址栏带 q 时回填到搜索框，刷新后保持同一个作者, 20261027-start
+  const initQ = params.get('q');
+  if (initQ) {
+    state.search = initQ.trim().toLowerCase();
+    $('#search').value = initQ;
+  }
+  // prize add by yanliang for 地址栏带 q 时回填到搜索框，刷新后保持同一个作者, 20261027-end
 
   // prize add by yanliang for 部署在 Linux 服务器时把路径提示换成服务器路径样式, 20261022-start
   try {

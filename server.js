@@ -12,8 +12,17 @@
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
+// prize add by yanliang for 问 AI：自签本机 Harness 的登录 cookie 需要 hmac/sha256, 20261026-start
+const crypto = require('crypto');
+// prize add by yanliang for 问 AI：自签本机 Harness 的登录 cookie 需要 hmac/sha256, 20261026-end
 const path = require('path');
 const { execFile, spawn } = require('child_process');
+// prize add by yanliang for 源码跳转：逻辑单独放一个文件，这里只做依赖注入, 20261026-start
+const { createJump } = require('./server-jump');
+// prize add by yanliang for 源码跳转：逻辑单独放一个文件，这里只做依赖注入, 20261026-end
+// prize add by yanliang for 查找引用：反向查询也单独放一个文件, 20261027-start
+const { createRefs } = require('./server-refs');
+// prize add by yanliang for 查找引用：反向查询也单独放一个文件, 20261027-end
 
 // prize add by yanliang for 新增 git 可执行文件探测, 20261022-start
 const GIT_CANDIDATES = [
@@ -250,8 +259,20 @@ async function readCommitDetail(repo, hash, ignoreSpace) {
       ? ['diff', `${hash}^1`, hash, '--patch', '--no-color', '--no-ext-diff', '--unified=3', ...extra]
       : diffArgs;
 
-  const [patch, numstatRaw] = await Promise.all([
-    git(patchArgs, repo).catch((e) => `diff 读取失败：${e.message}`),
+  // prize add by yanliang for 超大补丁（根提交一次导入上万个文件）不再整份读进内存, 20261028-start
+  // 根提交 7027 个文件的 patch 有 114MB，超过 maxBuffer（64MB）会直接失败，前端拿到空补丁
+  // 就显示「没有文件改动」。这里把失败原因结构化返回，前端改成「文件清单 + 按需读单文件」。
+  const [patchRes, numstatRaw] = await Promise.all([
+    git(patchArgs, repo)
+      .then((text) => ({ patch: text, error: '' }))
+      .catch((e) => {
+        const msg = (e && e.message) || '';
+        return {
+          patch: '',
+          error: /maxBuffer/i.test(msg) ? 'too-large' : 'failed',
+          detail: msg,
+        };
+      }),
     git(
       (parents.length > 1
         ? ['diff', '--numstat', `${hash}^1`, hash]
@@ -260,6 +281,7 @@ async function readCommitDetail(repo, hash, ignoreSpace) {
       repo
     ).catch(() => ''),
   ]);
+  // prize add by yanliang for 超大补丁（根提交一次导入上万个文件）不再整份读进内存, 20261028-end
   // prize add by yanliang for 让忽略空白开关同时作用于 patch 与 numstat，避免统计数字与显示不一致, 20261022-end
 
   return {
@@ -279,11 +301,32 @@ async function readCommitDetail(repo, hash, ignoreSpace) {
       .filter(Boolean),
     message: (f[10] || '').replace(/\s+$/, ''),
     files: parseNumstat(numstatRaw),
-    patch,
+    patch: patchRes.patch,
+    // prize add by yanliang for 补丁读取失败时告诉前端（too-large / failed），前端据此走按需加载, 20261028-start
+    patchError: patchRes.error,
+    patchErrorDetail: patchRes.detail || '',
+    // prize add by yanliang for 补丁读取失败时告诉前端（too-large / failed），前端据此走按需加载, 20261028-end
     isMerge: parents.length > 1,
   };
 }
 // prize add by yanliang for 读取单个提交详情, 20261022-end
+
+// prize add by yanliang for 单文件补丁：整份 diff 太大时，点开哪个文件才读哪个, 20261028-start
+async function readFileDiff(repo, hash, rawPath, ignoreSpace) {
+  const rel = safeRelPath(rawPath);
+  const hashRev = safeRev(hash);
+  if (!hashRev) throw new Error('缺少提交号');
+  const parentsRaw = await git(['show', '-s', '--pretty=format:%P', hashRev], repo);
+  const parents = parentsRaw.split(' ').filter(Boolean);
+  const extra = ignoreSpace ? ['--ignore-all-space'] : [];
+  const common = ['--patch', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=3', ...extra, '--', rel];
+  // 根提交没有父提交，用 show 自己算全量新增；其它提交与第一个父提交比（合并提交同理）
+  const args = parents.length
+    ? ['diff', parents[0], hashRev, ...common]
+    : ['show', hashRev, '--format=', ...common];
+  return { patch: await git(args, repo), path: rel };
+}
+// prize add by yanliang for 单文件补丁：整份 diff 太大时，点开哪个文件才读哪个, 20261028-end
 
 // prize add by yanliang for 读取两个提交之间的比对, 20261022-start
 async function readComparison(repo, base, head, ignoreSpace) {
@@ -599,6 +642,14 @@ async function readFileText(repo, rawPath, rawRev) {
   };
 }
 // prize add by yanliang for 读取单个文件内容，供 markdown / 图片在线预览, 20261023-end
+
+// prize add by yanliang for 源码跳转：把 git 读写能力注入给独立模块, 20261026-start
+const jumpTo = createJump({ git, readFileText, safeRelPath, safeRev });
+// prize add by yanliang for 源码跳转：把 git 读写能力注入给独立模块, 20261026-end
+
+// prize add by yanliang for 查找引用：复用跳转来找符号定义，从而知道它属于哪个类, 20261027-start
+const findRefs = createRefs({ git, readFileText, safeRelPath, safeRev, jumpTo });
+// prize add by yanliang for 查找引用：复用跳转来找符号定义，从而知道它属于哪个类, 20261027-end
 
 // prize add by yanliang for 文件编辑器：把工作区文本文件写回磁盘, 20261024-start
 // 定位是「就地改一个已有文件」，不负责新建 / 删除 / 改权限，越界的事一概不做。
@@ -1417,6 +1468,39 @@ function serveStatic(res, pathname) {
   });
 }
 
+// prize add by yanliang for 问 AI：用本机 dsh 凭据给浏览器写 Harness 登录 cookie, 20261026-start
+// Harness 的 web 服务（默认 127.0.0.1:54486）只认两种进入方式：启动时随机生成、只打印一次的一次性
+// token，或者它自己写下的签名 cookie。token 拿不到，但签名密钥就存在本机 ~/.dsh/.credentials.yaml 里，
+// 于是我们直接按它的格式签一个 cookie 交给浏览器，省掉「填 token」这一步。
+const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+
+function readHarnessSecret() {
+  try {
+    const text = fs.readFileSync(path.join(DSH_HOME, '.credentials.yaml'), 'utf8');
+    const m = text.match(/browser-session:[\s\S]*?secret:\s*([A-Za-z0-9_\-=+/]+)/);
+    if (!m) return null;
+    const buf = Buffer.from(m[1], 'base64url');
+    return buf.length === 32 ? buf : null;
+  } catch {
+    return null;
+  }
+}
+
+// cookie 名与 payload 里的 authority 都绑定 host:port，格式对齐 Harness 自己的实现
+function harnessAuthCookie(hostPort) {
+  const secret = readHarnessSecret();
+  if (!secret) return null;
+  const b64u = (b) => Buffer.from(b).toString('base64url');
+  const maxAgeMs = 30 * 24 * 3600 * 1000;
+  const issuedAt = Date.now();
+  const expiresAt = issuedAt + maxAgeMs;
+  const name = 'dsh-auth-' + b64u(crypto.createHash('sha256').update(hostPort).digest());
+  const body = b64u(Buffer.from(JSON.stringify({ version: 1, authority: hostPort, issuedAt, expiresAt }), 'utf8'));
+  const sig = b64u(crypto.createHmac('sha256', secret).update(body).digest());
+  return { name, value: `v1.${body}.${sig}`, maxAge: Math.floor(maxAgeMs / 1000) };
+}
+// prize add by yanliang for 问 AI：用本机 dsh 凭据给浏览器写 Harness 登录 cookie, 20261026-end
+
 async function handleApi(req, res, urlObj) {
   const q = urlObj.searchParams;
   const action = urlObj.pathname.replace('/api/', '');
@@ -1435,6 +1519,30 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, listDir(q.get('path')));
     }
     // prize add by yanliang for 目录浏览接口，供前端选仓库路径, 20261023-end
+
+    // prize add by yanliang for 问 AI：给浏览器签发本机 Harness 的登录 cookie, 20261026-start
+    // 放在 resolveRepo 之前：它跟仓库无关，只处理本机 Harness 地址
+    if (action === 'harness-auth') {
+      let target;
+      try {
+        target = new URL(String((await readJsonBody(req, 8192)).url || ''));
+      } catch {
+        return sendJson(res, 400, { ok: false, error: '地址不合法' });
+      }
+      if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(target.hostname)) {
+        return sendJson(res, 400, { ok: false, error: '只支持本机 Harness 地址（127.0.0.1 / localhost）' });
+      }
+      const cookie = harnessAuthCookie(target.host);
+      if (!cookie) {
+        return sendJson(res, 200, { ok: false, error: '本机没找到 dsh 凭据：' + path.join(DSH_HOME, '.credentials.yaml') });
+      }
+      res.setHeader(
+        'Set-Cookie',
+        `${cookie.name}=${cookie.value}; Max-Age=${cookie.maxAge}; Path=/; HttpOnly; SameSite=Strict`
+      );
+      return sendJson(res, 200, { ok: true, host: target.host });
+    }
+    // prize add by yanliang for 问 AI：给浏览器签发本机 Harness 的登录 cookie, 20261026-end
 
     const repo = await resolveRepo(q.get('repo'));
 
@@ -1456,6 +1564,15 @@ async function handleApi(req, res, urlObj) {
       // prize add by yanliang for 同一个 /api/commit 按方法区分：POST 提交，GET 读详情, 20261022-end
       return sendJson(res, 200, await readCommitDetail(repo, q.get('hash'), ignoreSpace));
     }
+    // prize add by yanliang for 整份补丁太大时按文件取 diff, 20261028-start
+    if (action === 'file-diff') {
+      return sendJson(
+        res,
+        200,
+        await readFileDiff(repo, q.get('hash'), q.get('path'), ignoreSpace)
+      );
+    }
+    // prize add by yanliang for 整份补丁太大时按文件取 diff, 20261028-end
     // prize add by yanliang for 提交面板读取暂存区, 20261022-start
     if (action === 'staged') {
       return sendJson(res, 200, await readStaged(repo));
@@ -1476,6 +1593,20 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, await treeSearch(repo, q.get('rev'), q.get('q'), q.get('limit')));
     }
     // prize add by yanliang for 「文件」搜索：全量路径列表, 20261026-end
+    // prize add by yanliang for 源码跳转：Ctrl+Click 找定义（只支持 Java / Kotlin）, 20261026-start
+    if (action === 'jump') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await jumpTo(repo, body));
+    }
+    // prize add by yanliang for 源码跳转：Ctrl+Click 找定义（只支持 Java / Kotlin）, 20261026-end
+    // prize add by yanliang for 查找引用：先给模块内结果，全库结果由后台扫描后轮询取回, 20261027-start
+    if (action === 'refs') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await findRefs(repo, body));
+    }
+    // prize add by yanliang for 查找引用：先给模块内结果，全库结果由后台扫描后轮询取回, 20261027-end
     if (action === 'file') {
       return sendJson(res, 200, await readFileText(repo, q.get('path'), q.get('rev')));
     }
