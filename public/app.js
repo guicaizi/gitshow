@@ -1149,7 +1149,7 @@ async function revealInTree(path, silent) {
     const name = parts[i];
     if (i === parts.length - 1) {
       if (!data.files.some((f) => f.name === name)) {
-        if (!silent) toast('「改动」里选中的文件不在当前版本中', true);
+        if (!silent) toast('当前版本里找不到这个文件，可能已被改名或删除', true);
         return false;
       }
       break;
@@ -1180,10 +1180,30 @@ function repaintBrowseTree() {
   paintFileSidebar(false);
 }
 
-function scrollToBrowseSel() {
+// prize add by yanliang for 文件详情定位：滚动到树里的选中项，可选居中 + 高亮, 20261026-start
+function scrollToBrowseSel(center) {
   const el = document.querySelector('.bnode.file.on');
-  if (el) el.scrollIntoView({ block: 'nearest' });
+  if (!el) return;
+  el.scrollIntoView({ block: center ? 'center' : 'nearest' });
+  if (!center) return;
+  el.classList.remove('flash');
+  void el.offsetWidth; // 强制回流，动画才能重放
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1500);
 }
+
+// 详情头部的「定位」：逐层展开左栏目录并滚到当前文件。搜索命中列表会盖住目录树，先退回目录树。
+async function locateInTree(path) {
+  const target = String(path || '');
+  if (!target || state.browse !== 'files') return false;
+  if (state.fileQuery) clearFileSearch(false);
+  const ok = await revealInTree(target);
+  repaintBrowseTree(); // 逐层加载是静默的，失败时也要把树画出来
+  if (!ok) return false;
+  scrollToBrowseSel(true);
+  return true;
+}
+// prize add by yanliang for 文件详情定位：滚动到树里的选中项，可选居中 + 高亮, 20261026-end
 
 function browseTabsHtml() {  const n = (state.files || []).length;
   const files = state.browse === 'files';
@@ -2307,6 +2327,8 @@ async function renderBrowseFile() {
   pane.innerHTML = `
     <div class="diff-pane-head" data-file="${esc(path)}">
       <span class="pane-file-path" title="${esc(absOf(path) || path)}">${esc(path)}</span>
+      <button class="btn tiny locate-btn" id="locateBtn" title="在左侧文件树中展开并定位到这个文件">${REVEAL_ICON}<span>定位</span></button>
+      <button class="btn tiny icon-only" id="locateDiskBtn" title="在系统文件管理器中显示这个文件">↗</button>
       ${editable ? '<button class="btn tiny edit-btn" id="editBtn" title="就地编辑这个文件并保存到工作区">编辑</button>' : ''}
       ${explainBtnHtml(path, kind, showDoc)}
       ${
@@ -3868,6 +3890,19 @@ function bindEvents() {
 
   // prize add by yanliang for 提交面板事件：遮罩关闭、勾选、amend、Ctrl+Enter 提交, 20261022-start
   document.addEventListener('click', (e) => {
+    // prize add by yanliang for 文件详情定位：点一次展开左栏目录并滚到该文件, 20261026-start
+    if (e.target.closest('#locateBtn')) {
+      e.preventDefault();
+      locateInTree(state.browseSel);
+      return;
+    }
+    // 同一文件在系统文件夹里显示（只有运行服务的本机能用，局域网访问会提示）
+    if (e.target.closest('#locateDiskBtn')) {
+      e.preventDefault();
+      revealPath(state.browseSel);
+      return;
+    }
+    // prize add by yanliang for 文件详情定位：点一次展开左栏目录并滚到该文件, 20261026-end
     // prize add by yanliang for 文件编辑器：编辑 / 保存 / 取消, 20261024-start
     if (e.target.closest('#editBtn')) {
       e.preventDefault();

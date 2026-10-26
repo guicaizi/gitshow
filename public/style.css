@@ -2340,6 +2340,50 @@ td.code .marker {
 }
 /* prize add by yanliang for 改动详情：还原按钮（危险操作，红字 + 红底 hover）, 20261024-end */
 
+/* prize add by yanliang for 文件详情定位按钮 + 定位后高亮闪烁, 20261026-start */
+.btn.tiny.locate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn.tiny.locate-btn svg {
+  flex: none;
+}
+
+/* 只有图标的窄按钮（详情头的「在文件夹中显示」） */
+.btn.tiny.icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-3);
+}
+
+.btn.tiny.icon-only:hover {
+  color: var(--accent);
+}
+
+/* 定位会滚到树中间，给它一圈短暂描边，明确告诉用户"在这儿" */
+.bnode.file.flash {
+  animation: bnode-flash 1.5s ease-out;
+}
+
+@keyframes bnode-flash {
+  0%,
+  55% {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+}
+/* prize add by yanliang for 文件详情定位按钮 + 定位后高亮闪烁, 20261026-end */
+
 /* prize add by yanliang for 「文件」搜索框与命中列表, 20261026-start */
 .file-search-wrap {
   position: relative;
