@@ -1,17 +1,63 @@
 @echo off
-chcp 65001 >nul
+chcp 936 >nul
 setlocal
 cd /d "%~dp0"
+title Git Ìá½»±È¶Ô¹¤¾ß
 
-set "NODE_EXE=node"
+set "PORT=7391"
+set "URL=http://127.0.0.1:%PORT%"
+
+rem ===== 1. ÕÒ node =====
+set "NODE_EXE="
 where node >nul 2>nul
-if errorlevel 1 set "NODE_EXE=C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
+if not errorlevel 1 set "NODE_EXE=node"
+if not defined NODE_EXE if exist "%ProgramFiles%\nodejs\node.exe" set "NODE_EXE=%ProgramFiles%\nodejs\node.exe"
+if not defined NODE_EXE if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "NODE_EXE=%LOCALAPPDATA%\Programs\nodejs\node.exe"
+if not defined NODE_EXE if exist "C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2-6\node.exe" set "NODE_EXE=C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
+if not defined NODE_EXE (
+  echo [´íÎó] Ã»ÓÐÕÒµ½ node¡£
+  echo ÇëÏÈ°²×° Node.js£¬»ò°Ñ node.exe ËùÔÚÄ¿Â¼¼Ó½ø PATH¡£
+  pause
+  exit /b 1
+)
 
-echo æ­£åœ¨å¯åŠ¨ Git æäº¤æ¯”å¯¹å·¥å…·...
+rem ===== 2. ÒÑ¾­ÔÚÅÜ¾ÍÖ±½Ó´ò¿ªÒ³Ãæ =====
+call :is_up
+if defined UP (
+  echo ·þÎñÒÑ¾­ÔÚÔËÐÐ£¬Ö±½Ó´ò¿ªÒ³Ãæ£º%URL%
+  if not "%GDV_NO_BROWSER%"=="1" start "" "%URL%"
+  ping -n 4 127.0.0.1 >nul
+  exit /b 0
+)
+
+rem ===== 3. Æô¶¯ =====
+echo ÕýÔÚÆô¶¯ Git Ìá½»±È¶Ô¹¤¾ß...
 start "git-diff-viewer" /min "%NODE_EXE%" "%~dp0server.js"
-timeout /t 2 >nul
-start "" "http://127.0.0.1:7391"
+
+set "WAIT=0"
+:waitloop
+ping -n 2 127.0.0.1 >nul
+set /a WAIT+=1
+call :is_up
+if defined UP goto ready
+if %WAIT% lss 8 goto waitloop
 echo.
-echo å·²æ‰“å¼€ http://127.0.0.1:7391
-echo å…³é—­å¼¹å‡ºçš„ node çª—å£å³å¯åœæ­¢æœåŠ¡ã€‚
-timeout /t 3 >nul
+echo [´íÎó] Æô¶¯Ê§°Ü£º%PORT% ¶Ë¿ÚÃ»ÓÐÆðÀ´¡£
+echo Çë»¹Ô­×îÐ¡»¯µÄ "git-diff-viewer" ´°¿Ú£¬¿´ÀïÃæ±¨ÁËÊ²Ã´´í¡£
+echo ³£¼ûÔ­Òò£º¶Ë¿Ú±»ÆäËû³ÌÐòÕ¼ÓÃ¡¢node °æ±¾¹ýµÍ¡¢server.js ±»¸Ä¶¯¡£
+pause
+exit /b 1
+
+:ready
+if not "%GDV_NO_BROWSER%"=="1" start "" "%URL%"
+echo.
+echo ÒÑ´ò¿ª %URL%
+echo ¹Ø±Õ "git-diff-viewer" ´°¿Ú¼´¿ÉÍ£Ö¹·þÎñ¡£
+ping -n 5 127.0.0.1 >nul
+exit /b 0
+
+rem ===== ¼ì²é 7391 ÊÇ·ñÓÐ½ø³ÌÔÚ LISTENING£¬½á¹ûÐ´½ø UP =====
+:is_up
+set "UP="
+for /f "tokens=*" %%L in ('netstat -ano ^| findstr ":%PORT% " ^| findstr "LISTENING"') do set "UP=1"
+exit /b 0

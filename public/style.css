@@ -1745,3 +1745,668 @@ td.code .marker {
   white-space: nowrap;
 }
 /* prize add by yanliang for 目录选择面板样式, 20261023-end */
+
+/* prize add by yanliang for markdown 在线预览样式, 20261023-start */
+.btn.tiny {
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.md-toggle { margin-left: 2px; font-family: var(--sans); }
+
+.md-toggle.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.md-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  letter-spacing: .2px;
+}
+
+.md-loading {
+  padding: 44px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.md-view {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 26px 32px 88px;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text);
+  word-wrap: break-word;
+}
+
+.md-view > *:first-child { margin-top: 0; }
+
+.md-view h1,
+.md-view h2,
+.md-view h3,
+.md-view h4,
+.md-view h5,
+.md-view h6 {
+  margin: 1.5em 0 .6em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.md-view h1 { font-size: 24px; padding-bottom: .3em; border-bottom: 1px solid var(--border-soft); }
+.md-view h2 { font-size: 19px; padding-bottom: .25em; border-bottom: 1px solid var(--border-soft); }
+.md-view h3 { font-size: 16px; }
+.md-view h4 { font-size: 14px; }
+.md-view h5,
+.md-view h6 { font-size: 13px; color: var(--text-2); }
+
+.md-view p { margin: .75em 0; }
+.md-view a { color: var(--accent); text-decoration: none; }
+.md-view a:hover { text-decoration: underline; }
+
+.md-view ul,
+.md-view ol { margin: .6em 0; padding-left: 1.7em; }
+.md-view li { margin: .25em 0; }
+.md-view li > ul,
+.md-view li > ol { margin: .2em 0; }
+
+.md-view code {
+  padding: .15em .4em;
+  font-family: var(--mono);
+  font-size: .88em;
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.md-view .md-code {
+  margin: .9em 0;
+  padding: 12px 14px;
+  overflow: auto;
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: var(--bg-sub);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.md-view .md-code code {
+  padding: 0;
+  font-size: 12.5px;
+  background: none;
+  border-radius: 0;
+  white-space: pre;
+}
+
+.md-view blockquote {
+  margin: .9em 0;
+  padding: .2em 0 .2em 14px;
+  color: var(--text-2);
+  border-left: 3px solid var(--border);
+}
+
+.md-view blockquote p:first-child { margin-top: 0; }
+.md-view blockquote p:last-child { margin-bottom: 0; }
+
+.md-view hr {
+  height: 1px;
+  margin: 1.6em 0;
+  background: var(--border-soft);
+  border: 0;
+}
+
+.md-table-wrap { margin: 1em 0; overflow: auto; }
+
+.md-view table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.md-view th,
+.md-view td {
+  padding: 6px 11px;
+  text-align: left;
+  vertical-align: top;
+  border: 1px solid var(--border-soft);
+}
+
+.md-view th {
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--bg-sub);
+}
+
+.md-view tbody tr:nth-child(2n) td { background: var(--bg-sub); }
+.md-view .ta-center { text-align: center; }
+.md-view .ta-right { text-align: right; }
+
+.md-view img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.md-view strong { font-weight: 600; }
+.md-view del { color: var(--text-3); }
+
+.md-task {
+  position: relative;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+}
+
+.md-task.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.md-task.on::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(42deg);
+}
+/* prize add by yanliang for markdown 在线预览样式, 20261023-end */
+
+/* prize add by yanliang for 仓库文件树浏览：左栏 tab、懒加载树、文件内容视图, 20261023-start */
+.pane-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pane-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pane-tab:hover { color: var(--text); background: var(--bg-hover); }
+
+.pane-tab.on {
+  color: var(--text);
+  font-weight: 600;
+  background: var(--bg-active);
+}
+
+.tab-num {
+  padding: 0 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-3);
+  background: var(--bg-hover);
+  border-radius: 8px;
+}
+
+.pane-tab.on .tab-num { color: var(--text-2); background: var(--bg); }
+
+.bnode {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding-right: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bnode:hover { background: var(--bg-hover); color: var(--text); }
+.bnode.dir .bname { font-weight: 500; }
+.bnode.file.on { color: var(--text); background: var(--accent-soft); }
+
+.bcaret {
+  flex: 0 0 10px;
+  width: 10px;
+  font-size: 9px;
+  line-height: 1;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.bname { overflow: hidden; text-overflow: ellipsis; }
+
+.bnode-load {
+  height: 22px;
+  padding-left: 21px;
+  font-size: 11.5px;
+  line-height: 22px;
+  color: var(--text-3);
+}
+
+.file-view {
+  display: flex;
+  align-items: flex-start;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.fv-gutter {
+  flex: 0 0 auto;
+  width: calc(var(--fv-w, 3) * 1ch + 16px);
+  margin: 0;
+  padding: 0 10px 0 0;
+  font: inherit;
+  text-align: right;
+  color: var(--text-3);
+  white-space: pre;
+  user-select: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+
+.fv-code {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0 16px 0 12px;
+  font: inherit;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.file-view.wrap .fv-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.fv-cut {
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.fv-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+/* prize add by yanliang for 仓库文件树浏览：左栏 tab、懒加载树、文件内容视图, 20261023-end */
+
+/* prize add by yanliang for 文件树「定位到改动文件」按钮, 20261023-start */
+.pane-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 22px;
+  margin-left: auto;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.pane-icon-btn:hover { color: var(--accent); background: var(--bg-hover); }
+/* prize add by yanliang for 文件树「定位到改动文件」按钮, 20261023-end */
+
+/* prize add by yanliang for 代码语法高亮配色, 20261023-start */
+.file-view {
+  --tk-k: #cf222e;
+  --tk-s: #0a3069;
+  --tk-c: #6e7781;
+  --tk-n: #0550ae;
+  --tk-f: #8250df;
+  --tk-t: #953800;
+  --tk-a: #116329;
+}
+
+[data-theme="dark"] .file-view {
+  --tk-k: #ff7b72;
+  --tk-s: #a5d6ff;
+  --tk-c: #8b949e;
+  --tk-n: #79c0ff;
+  --tk-f: #d2a8ff;
+  --tk-t: #ffa657;
+  --tk-a: #7ee787;
+}
+
+.file-view .tk-k { color: var(--tk-k); }
+.file-view .tk-s { color: var(--tk-s); }
+.file-view .tk-c { color: var(--tk-c); font-style: italic; }
+.file-view .tk-n { color: var(--tk-n); }
+.file-view .tk-f { color: var(--tk-f); }
+.file-view .tk-t { color: var(--tk-t); }
+.file-view .tk-a { color: var(--tk-a); }
+
+/* prize add by yanliang for 代码语法高亮配色, 20261023-end */
+
+/* prize add by yanliang for AI 解释：头部按钮、树上标记与文档元信息, 20261024-start */
+.explain-btn {
+  margin-left: 2px;
+  font-family: var(--sans);
+  white-space: nowrap;
+}
+
+.explain-btn.ready {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.explain-btn.pending {
+  opacity: .7;
+  cursor: default;
+}
+
+.explain-btn.failed {
+  color: #c0392b;
+  border-color: rgba(192, 57, 43, .35);
+}
+
+.ex-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: #e0a03a;
+}
+
+/* 文件树上「已有解释」的小点：贴右侧，不挤占文件名 */
+.bex-dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  margin-left: auto;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: .5;
+}
+
+.explain-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 32px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.explain-meta .ex-related { font-family: var(--sans); }
+
+.explain-meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.explain-meta a:hover { text-decoration: underline; }
+
+.explain-banner {
+  margin: 10px 32px 0;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #8a5a00;
+  background: rgba(224, 160, 58, .12);
+  border: 1px solid rgba(224, 160, 58, .34);
+  border-radius: 7px;
+}
+
+.explain-view { padding-top: 16px; }
+/* prize add by yanliang for AI 解释：头部按钮、树上标记与文档元信息, 20261024-end */
+
+/* prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-start */
+.explain-paths {
+  margin: 10px 32px 0;
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-sub);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+}
+
+.ex-path-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ex-path-row + .ex-path-row {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px dashed var(--border-soft);
+}
+
+.ex-path-k {
+  flex: 0 0 auto;
+  width: 52px;
+  padding-top: 1px;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* 长路径必须能断行，否则窄右栏会被撑出横向滚动 */
+.ex-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-2);
+  word-break: break-all;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+.ex-path:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.ex-reveal {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+  color: var(--text-3);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.ex-reveal:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+/* prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-end */
+
+/* prize add by yanliang for 文件编辑器：就地编辑视图（行号列 + textarea 双栏）, 20261024-start */
+/* 行号与代码各自滚动、靠 scrollTop 对齐：两栏必须共用同一套字体度量，否则行会错位 */
+.ed-state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.ed-state.dirty {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ed-body {
+  display: flex;
+  overflow: hidden;
+}
+
+.ed-wrap {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 19px;
+  background: var(--bg);
+}
+
+.ed-gutter {
+  flex: 0 0 auto;
+  min-width: 52px;
+  margin: 0;
+  padding: 8px 10px 8px 8px;
+  overflow: hidden;
+  font: inherit;
+  text-align: right;
+  color: var(--text-3);
+  white-space: pre;
+  user-select: none;
+  background: var(--bg-sub);
+  border-right: 1px solid var(--border-soft);
+}
+
+.ed-area {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 16px 8px 12px;
+  font: inherit;
+  line-height: 19px;
+  color: var(--text);
+  tab-size: 4;
+  white-space: pre;
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  caret-color: var(--accent);
+}
+
+.ed-area::selection { background: var(--accent-soft); }
+/* prize add by yanliang for 文件编辑器：就地编辑视图（行号列 + textarea 双栏）, 20261024-end */
+
+/* prize add by yanliang for 改动详情：还原按钮（危险操作，红字 + 红底 hover）, 20261024-start */
+.btn.tiny.danger {
+  color: var(--del-text);
+  border-color: var(--border);
+}
+
+.btn.tiny.danger:hover {
+  color: var(--del-text);
+  background: var(--del-bg);
+  border-color: var(--del-bg-strong);
+}
+/* prize add by yanliang for 改动详情：还原按钮（危险操作，红字 + 红底 hover）, 20261024-end */
+
+/* prize add by yanliang for 「文件」搜索框与命中列表, 20261026-start */
+.file-search-wrap {
+  position: relative;
+  display: flex;
+  flex: 0 0 24px;
+  min-width: 0;
+}
+
+.pane-head .file-search-wrap .file-filter {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  padding-right: 22px;
+}
+
+.file-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.file-search-wrap.has-q .file-search-clear { display: flex; }
+.file-search-clear:hover { color: var(--text); background: var(--bg-hover); }
+
+/* 命中条数提示 */
+.sfile-tip {
+  padding: 2px 10px 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* 命中行：目录前缀先让位截断，文件名尽量完整显示 */
+.sfile { gap: 0; padding-left: 8px; }
+.sfile .sfile-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.sfile .sfile-name {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sfile.on .sfile-dir { color: var(--text-2); }
+
+mark.fhit {
+  padding: 0 1px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 2px;
+}
+/* prize add by yanliang for 「文件」搜索框与命中列表, 20261026-end */

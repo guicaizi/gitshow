@@ -95,6 +95,53 @@ const state = {
   // prize add by yanliang for 记住被折叠的目录, 20261022-start
   collapsedDirs: new Set(),
   // prize add by yanliang for 记住被折叠的目录, 20261022-end
+  // prize add by yanliang for markdown 在线预览：是否用渲染视图代替源码 diff, 20261023-start
+  mdPreview: localStorage.getItem('gdv.mdPreview') === '1',
+  mdToken: 0,
+  // prize add by yanliang for markdown 在线预览：是否用渲染视图代替源码 diff, 20261023-end
+  // prize add by yanliang for AI 解释：索引、排队状态与右侧解释视图, 20261024-start
+  explainIndex: {},
+  explainPending: {},
+  explainMode: false,
+  explainStatus: null,
+  explainDocToken: 0,
+  explainPoll: null,
+  // prize add by yanliang for AI 解释：索引、排队状态与右侧解释视图, 20261024-end
+  // prize add by yanliang for 仓库文件树浏览：改动 / 文件 两种左栏模式, 20261023-start
+  browse: localStorage.getItem('gdv.browse') === 'files' ? 'files' : 'changes',
+  browseSel: '',
+  browseToken: 0,
+  treeCache: new Map(),
+  treeOpen: new Set(),
+  treeLoading: new Map(),
+  // prize add by yanliang for 「文件」搜索：查询词、服务端命中列表与状态机, 20261026-start
+  fileQuery: '',
+  fileHits: null,
+  fileHitTotal: 0,
+  fileHitQuery: '',
+  fileHitRev: '',
+  fileSearchError: '',
+  fileSearchBuilding: false,
+  fileSearchToken: 0,
+  fileSearchTimer: 0,
+  // prize add by yanliang for 「文件」搜索：查询词、服务端命中列表与状态机, 20261026-end
+  // prize add by yanliang for 仓库文件树浏览：改动 / 文件 两种左栏模式, 20261023-end
+  // prize add by yanliang for 文件编辑器：编辑态、原内容、外部改动检测基准, 20261024-start
+  editing: false,
+  editPath: '',
+  editBase: '',
+  editDirty: false,
+  editMtime: 0,
+  // prize add by yanliang for 编辑定位：预览 → 编辑器的锚点, 20261024-start
+  editAnchor: null,
+  // prize add by yanliang for 编辑定位：预览 → 编辑器的锚点, 20261024-end
+  // prize add by yanliang for 编辑定位：编辑器 → 预览的锚点（取消 / 保存后还原位置）, 20261024-start
+  browseAnchor: null,
+  // prize add by yanliang for 编辑定位：编辑器 → 预览的锚点（取消 / 保存后还原位置）, 20261024-end
+  // prize add by yanliang for 文件编辑器：保存后工作区改动列表需要重算，切回「改动」时再刷, 20261024-start
+  workingStale: false,
+  // prize add by yanliang for 文件编辑器：保存后工作区改动列表需要重算，切回「改动」时再刷, 20261024-end
+  // prize add by yanliang for 文件编辑器：编辑态、原内容、外部改动检测基准, 20261024-end
   filter: '',
   // prize add by yanliang for 提交面板状态：暂存区数据、勾选集合、amend 与提交说明, 20261022-start
   commitOpen: false,
@@ -741,6 +788,251 @@ function diffBodyHtml(f) {
 }
 // prize add by yanliang for 抽出文件正文渲染，提交面板的暂存预览也复用, 20261022-end
 
+// prize add by yanliang for markdown 在线预览：轻量渲染器（零依赖，先转义再套语法）, 20261023-start
+const MD_RE = /\.(md|markdown|mdx)$/i;
+
+function isMarkdown(p) {
+  return MD_RE.test(String(p || '').split('?')[0].split('#')[0]);
+}
+
+// 当前预览的文件上下文，图片等相对路径要靠它换算
+let mdCtx = { file: '', rev: '' };
+
+function mdDir(p) {
+  const i = p.lastIndexOf('/');
+  return i < 0 ? '' : p.slice(0, i + 1);
+}
+
+function mdJoin(baseDir, rel) {
+  const out = [];
+  for (const seg of (baseDir + rel).split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  return out.join('/');
+}
+
+// 仓库内相对资源（图片/附件）-> /api/raw，否则浏览器按页面地址会 404
+function mdAssetUrl(src) {
+  const s = String(src || '').trim();
+  if (!s || /^(https?:|data:|blob:|\/|#)/i.test(s)) return s;
+  let decoded = s;
+  try {
+    decoded = decodeURI(s);
+  } catch (_) {}
+  const rel = mdJoin(mdDir(mdCtx.file), decoded);
+  const qs = new URLSearchParams({ repo: state.repo, path: rel });
+  if (mdCtx.rev) qs.set('rev', mdCtx.rev);
+  return `/api/raw?${qs.toString()}`;
+}
+
+// 行内语法；入参必须是已经 esc 过的纯文本，code 内的标记用占位符保护
+function mdInline(text) {
+  const codes = [];
+  let s = String(text).replace(/`([^`\n]+)`/g, (_m, c) => {
+    codes.push(c);
+    return `\u0001${codes.length - 1}\u0001`;
+  });
+
+  s = s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)/g, (_m, alt, src) => {
+    return `<img src="${mdAssetUrl(src)}" alt="${alt}" loading="lazy">`;
+  });
+  s = s.replace(/\[([^\]]+)\]\(\s*([^)\s]+)[^)]*\)/g, (_m, txt, href) => {
+    if (href.startsWith('#')) return `<a href="${href}">${txt}</a>`;
+    const external = /^[a-z][a-z0-9+.-]*:/i.test(href);
+    const url = external ? href : mdAssetUrl(href);
+    return `<a href="${url}"${external || url.startsWith('/api/raw') ? ' target="_blank" rel="noopener"' : ''}>${txt}</a>`;
+  });
+
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/(^|[^_\w])_([^_\n]+)_/g, '$1<em>$2</em>');
+  s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+
+  return s.replace(/\u0001(\d+)\u0001/g, (_m, i) => `<code>${codes[Number(i)] || ''}</code>`);
+}
+
+function mdCells(line) {
+  let s = String(line).trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|');
+}
+
+// 列表按缩进还原嵌套，level 为缩进层级（2 空格一级）
+function mdList(items) {
+  let html = '';
+  const stack = [];
+  for (const it of items) {
+    const tag = it.ordered ? 'ol' : 'ul';
+    while (stack.length && stack[stack.length - 1].level > it.level) html += `</li></${stack.pop().tag}>`;
+    if (!stack.length || stack[stack.length - 1].level < it.level) {
+      html += `<${tag}>`;
+      stack.push({ tag, level: it.level });
+    } else if (stack[stack.length - 1].tag !== tag) {
+      html += `</li></${stack.pop().tag}><${tag}>`;
+      stack.push({ tag, level: it.level });
+    } else {
+      html += '</li>';
+    }
+    let t = esc(it.text);
+    const task = t.match(/^\[([ xX])\]\s+([\s\S]*)$/);
+    if (task) t = `<span class="md-task${/[xX]/.test(task[1]) ? ' on' : ''}"></span>` + task[2];
+    // 这里先不闭合 li：更深的子列表要嵌在当前 li 里，闭合交给下一个 item 或收尾
+    html += `<li>${mdInline(t)}`;
+  }
+  while (stack.length) html += `</li></${stack.pop().tag}>`;
+  return html;
+}
+
+// 返回 HTML 字符串；文档里的标签一律 esc，不执行
+function markdownToHtml(src) {
+  const lines = String(src || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  const blockStart = (t) =>
+    /^\s{0,3}(#{1,6}\s|```|~~~|>|\s*[-*+]\s|\s*\d+[.)]\s)/.test(t) ||
+    /^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(t);
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 围栏代码块：内部不再解析任何语法
+    const fence = line.match(/^\s{0,3}(`{3,}|~{3,})\s*(.*)$/);
+    if (fence) {
+      const mark = fence[1];
+      const lang = fence[2].trim().replace(/^\{?\.?/, '').replace(/\}?$/, '');
+      const body = [];
+      i++;
+      const closeRe = new RegExp('^\\s{0,3}' + mark[0] + '{' + mark.length + ',}\\s*$');
+      while (i < lines.length && !closeRe.test(lines[i])) body.push(lines[i++]);
+      i++;
+      out.push(
+        `<pre class="md-code"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.join('\n'))}</code></pre>`
+      );
+      continue;
+    }
+
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      out.push('<hr>');
+      i++;
+      continue;
+    }
+
+    const h = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (h) {
+      const lv = h[1].length;
+      out.push(`<h${lv}>${mdInline(esc(h[2]))}</h${lv}>`);
+      i++;
+      continue;
+    }
+
+    if (/^\s{0,3}>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s{0,3}>/.test(lines[i])) buf.push(lines[i++].replace(/^\s{0,3}>\s?/, ''));
+      out.push(`<blockquote>${markdownToHtml(buf.join('\n'))}</blockquote>`);
+      continue;
+    }
+
+    // 表格：本行含 | 且下一行是 --- 分隔行
+    if (
+      line.includes('|') &&
+      i + 1 < lines.length &&
+      lines[i + 1].includes('-') &&
+      /^\s*\|?[\s:|-]+$/.test(lines[i + 1])
+    ) {
+      const head = mdCells(line);
+      const aligns = mdCells(lines[i + 1]).map((c) => {
+        const t = c.trim();
+        if (/^:-+:$/.test(t)) return 'center';
+        if (/^-+:$/.test(t)) return 'right';
+        return '';
+      });
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(mdCells(lines[i++]));
+      const cell = (tag, val, k) => {
+        const al = aligns[k] ? ` class="ta-${aligns[k]}"` : '';
+        return `<${tag}${al}>${mdInline(esc(String(val == null ? '' : val).trim()))}</${tag}>`;
+      };
+      out.push(
+        '<div class="md-table-wrap"><table><thead><tr>' +
+          head.map((c, k) => cell('th', c, k)).join('') +
+          '</tr></thead><tbody>' +
+          rows.map((r) => '<tr>' + head.map((_c, k) => cell('td', r[k], k)).join('') + '</tr>').join('') +
+          '</tbody></table></div>'
+      );
+      continue;
+    }
+
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
+        const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        items.push({
+          level: Math.min(Math.floor(m[1].replace(/\t/g, '  ').length / 2), 5),
+          ordered: /\d/.test(m[2]),
+          text: m[3],
+        });
+        i++;
+      }
+      out.push(mdList(items));
+      continue;
+    }
+
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !blockStart(lines[i])) para.push(lines[i++].trim());
+    if (!para.length) {
+      i++;
+      continue;
+    }
+    out.push(`<p>${mdInline(esc(para.join('\n'))).replace(/\n/g, '<br>')}</p>`);
+  }
+  return out.join('\n');
+}
+
+// 预览取哪个版本：提交详情看该提交，对比看目标版本，工作区直接读磁盘
+function previewRev() {
+  const d = state.detail;
+  if (!d) return 'worktree';
+  if (d.kind === 'commit') return d.hash || 'worktree';
+  if (d.kind === 'compare') return d.head || 'worktree';
+  return 'worktree';
+}
+
+async function renderMdPreview(path) {
+  const body = $('#diffPaneBody');
+  if (!body) return;
+  const token = ++state.mdToken;
+  try {
+    const data = await api('file', { path, rev: previewRev() });
+    if (token !== state.mdToken) return;
+    if (data.binary) {
+      body.innerHTML = '<div class="binary-note">这是二进制文件，没法预览</div>';
+      return;
+    }
+    if (data.tooLarge) {
+      body.innerHTML = '<div class="empty-note">文件超过 2MB，切到「源码」看改动更合适</div>';
+      return;
+    }
+    mdCtx = { file: data.path, rev: data.rev === 'worktree' ? '' : data.rev };
+    body.innerHTML = `<article class="md-view">${markdownToHtml(data.content)}</article>`;
+    body.scrollTop = 0;
+  } catch (err) {
+    if (token !== state.mdToken) return;
+    body.innerHTML = `<div class="empty-note">预览失败：${esc(err.message)}</div>`;
+  }
+}
+// prize add by yanliang for markdown 在线预览：轻量渲染器（零依赖，先转义再套语法）, 20261023-end
+
 function renderSelectedFile() {
   const pane = $('#diffPane');
   if (!pane) return;
@@ -751,7 +1043,16 @@ function renderSelectedFile() {
     return;
   }
 
-  const body = diffBodyHtml(f);
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-start
+  const md = isMarkdown(f.path);
+  const mdMode = md && state.mdPreview;
+  const body = mdMode ? '<div class="md-loading">加载文档…</div>' : diffBodyHtml(f);
+  const mdBtn = md
+    ? `<button class="btn tiny md-toggle${mdMode ? ' on' : ''}" id="mdToggle" title="${
+        mdMode ? '显示这个文件的逐行改动' : '把文档渲染成排版后的样子'
+      }">${mdMode ? '源码' : '预览'}</button>`
+    : '';
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-end
 
   const ops = f.live
     ? { stage: !!(f.untracked || f.dirty), unstage: !!f.staged, ignore: !!f.untracked }
@@ -760,28 +1061,43 @@ function renderSelectedFile() {
   const pathHtml = renamed
     ? `<span class="old-path">${esc(f.oldPath)}</span><span class="arrow">→</span>${esc(f.path)}`
     : esc(f.path);
+  // prize add by yanliang for 改动详情：还原到修改之前（HEAD 版本）, 20261024-start
+  // 只对 HEAD 里存在的路径给入口：未跟踪 / 新增文件没有「修改之前」可言
+  const canDiscard = !!(f.live && !f.untracked && f.status !== 'A');
+  const discardBtn = canDiscard
+    ? `<button class="btn tiny danger" data-discard="${esc(f.path)}" title="丢弃这个文件的全部改动，恢复成 HEAD 版本">还原</button>`
+    : '';
+  // prize add by yanliang for 改动详情：还原到修改之前（HEAD 版本）, 20261024-end
 
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
-  pane.classList.toggle('split-mode', state.view === 'split');
+  pane.classList.toggle('split-mode', state.view === 'split' && !mdMode);
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
   pane.innerHTML = `
     <div class="diff-pane-head" data-file="${esc(f.path)}">
       <span class="file-status st-${f.status}">${f.status}</span>
       ${f.staged ? '<span class="staged-dot" title="已在暂存区"></span>' : ''}
       <span class="pane-file-path" title="${esc(f.path)}">${pathHtml}</span>
+      ${mdBtn}
       <span class="file-stat">
         ${renderStatBars(f.additions, f.deletions)}
         <span class="stat-add">+${f.additions}</span>
         <span class="stat-del">-${f.deletions}</span>
       </span>
       ${renderRowOps(ops, 'file')}
+      ${discardBtn}
     </div>
-    <div class="diff-pane-body" id="diffPaneBody">${body}</div>
+    <div class="diff-pane-body${mdMode ? ' md-body' : ''}" id="diffPaneBody">${body}</div>
     <div class="split-handle" id="splitHandle" title="拖动调整左右比例，双击复位"></div>`;
+
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-start
+  if (mdMode) renderMdPreview(f.path);
+  // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-end
 
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
   updateSplitHandle();
   // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-end
+  // 预览模式下工具条要收起源码相关开关
+  renderToolbar();
 }
 
 // 点击左侧文件名：切换选中项并重绘右侧
@@ -794,6 +1110,1295 @@ function selectFile(path) {
   });
   renderSelectedFile();
 }
+
+// prize add by yanliang for 仓库文件树：改动 / 文件 双模式，文件按层懒加载, 20261023-start
+// 文件树看哪个版本：提交详情看该提交，比对看目标提交，工作区看 HEAD（内容仍读磁盘最新）
+function browseRev() {
+  const d = state.detail;
+  if (!d) return 'HEAD';
+  if (d.kind === 'commit') return d.hash || 'HEAD';
+  if (d.kind === 'compare') return d.head || 'HEAD';
+  return 'HEAD';
+}
+
+// prize add by yanliang for 文件内容按视图取版本：工作区读磁盘当前内容，提交 / 比对读对应快照, 20261024-start
+// 树仍按 browseRev()（工作区看 HEAD 的文件清单），但正文必须是磁盘上的那一份，
+// 否则和「编辑」里打开的、真正要改的内容对不上
+function browseFileRev() {
+  const d = state.detail;
+  if (d && d.kind === 'commit') return d.hash || 'HEAD';
+  if (d && d.kind === 'compare') return d.head || 'HEAD';
+  return 'worktree';
+}
+// prize add by yanliang for 文件内容按视图取版本：工作区读磁盘当前内容，提交 / 比对读对应快照, 20261024-end
+
+const REVEAL_ICON =
+  '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5"/><path d="M8 1.2v2.1M8 12.7v2.1M1.2 8h2.1M12.7 8h2.1"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>';
+
+// 展开整条祖先链并选中目标文件；silent=true 时失败不弹提示（切换 tab 用）
+async function revealInTree(path, silent) {
+  const target = String(path || '');
+  if (!target) return false;
+  if (!state.treeCache.has('')) await loadTreeDir('', true);
+
+  const parts = target.split('/').filter(Boolean);
+  let dir = '';
+  for (let i = 0; i < parts.length; i++) {
+    const data = state.treeCache.get(dir);
+    if (!data) return false;
+    const name = parts[i];
+    if (i === parts.length - 1) {
+      if (!data.files.some((f) => f.name === name)) {
+        if (!silent) toast('「改动」里选中的文件不在当前版本中', true);
+        return false;
+      }
+      break;
+    }
+    const child = data.dirs.find((d) => d.name === name);
+    if (!child) {
+      if (!silent) toast('「改动」里选中的文件不在当前版本中', true);
+      return false;
+    }
+    state.treeOpen.add(child.path);
+    if (!state.treeCache.has(child.path)) {
+      await loadTreeDir(child.path, true);
+      if (!state.treeCache.has(child.path)) return false;
+    }
+    dir = child.path;
+  }
+  // prize add by yanliang for 文件编辑器：定位会换掉选中文件，先确认放弃修改, 20261024-start
+  if (state.browseSel !== target && !confirmLeaveEdit()) return false;
+  // prize add by yanliang for 文件编辑器：定位会换掉选中文件，先确认放弃修改, 20261024-end
+  state.browseSel = target;
+  return true;
+}
+
+function repaintBrowseTree() {
+  // prize add by yanliang for 「文件」搜索：搜索命中列表在显示时，目录树的重绘不能盖掉它, 20261026-start
+  if (state.browse === 'files' && state.fileQuery.trim()) return;
+  // prize add by yanliang for 「文件」搜索：搜索命中列表在显示时，目录树的重绘不能盖掉它, 20261026-end
+  paintFileSidebar(false);
+}
+
+function scrollToBrowseSel() {
+  const el = document.querySelector('.bnode.file.on');
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
+function browseTabsHtml() {  const n = (state.files || []).length;
+  const files = state.browse === 'files';
+  return `<div class="pane-tabs" id="paneTabs">
+    <button class="pane-tab${files ? '' : ' on'}" data-browse="changes">改动<span class="tab-num">${n}</span></button>
+    <button class="pane-tab${files ? ' on' : ''}" data-browse="files">文件</button>
+  </div>`;
+}
+
+function paneHeadHtml() {
+  // 文件模式下给一个「定位到改动里选中的文件」的入口
+  const revealBtn =
+    state.browse === 'files' && state.selected
+      ? `<button class="pane-icon-btn" id="revealChange" title="定位到「改动」里选中的文件">${REVEAL_ICON}</button>`
+      : '';
+  return `<div class="pane-head-row">${browseTabsHtml()}${revealBtn}</div>${
+    state.browse === 'files'
+      ? // prize add by yanliang for 「文件」搜索：目录树上方的搜索框, 20261026-start
+        `<div class="file-search-wrap${state.fileQuery ? ' has-q' : ''}">
+      <input class="file-filter" id="fileSearch" spellcheck="false" autocomplete="off"
+        placeholder="搜索文件路径…" value="${esc(state.fileQuery)}" />
+      <button class="file-search-clear" id="fileSearchClear" title="清空搜索（Esc）">✕</button>
+    </div>`
+      : // prize add by yanliang for 「文件」搜索：目录树上方的搜索框, 20261026-end
+        `<input class="file-filter" id="fileFilter" placeholder="筛选文件…" value="${esc(state.filter)}" />`
+  }`;
+}
+
+function switchBrowse(mode) {
+  if (state.browse === mode) return;
+  // prize add by yanliang for 文件编辑器：离开「文件」视图会丢掉编辑，先确认, 20261024-start
+  if (mode !== 'files' && state.editing) {
+    if (!confirmLeaveEdit()) return;
+    resetEditState();
+  }
+  // prize add by yanliang for 文件编辑器：离开「文件」视图会丢掉编辑，先确认, 20261024-end
+  state.browse = mode;
+  localStorage.setItem('gdv.browse', mode);
+  // prize add by yanliang for 文件编辑器：编辑保存过文件，切回「改动」时重算一次列表, 20261024-start
+  if (mode === 'changes' && state.workingStale) {
+    state.workingStale = false;
+    if (!state.detail || state.detail.kind === 'working') {
+      // 从没加载过工作区就整份拉一次，否则只刷新已有详情
+      const job = state.detail ? refreshWorking() : openWorkingTree();
+      job.then(() => {
+        if (state.browse === 'changes') renderBrowserPane();
+      });
+      renderToolbar();
+      return;
+    }
+  }
+  // prize add by yanliang for 文件编辑器：编辑保存过文件，切回「改动」时重算一次列表, 20261024-end
+  renderBrowserPane();
+  renderToolbar();
+  // 切到文件树时，自动定位到「改动」里选中的那个文件
+  if (mode === 'files' && state.selected) {
+    revealInTree(state.selected, true).then((ok) => {
+      if (!ok) return;
+      repaintBrowseTree();
+      scrollToBrowseSel();
+      renderBrowseFile();
+    });
+  }
+}
+
+// 右栏按当前模式分发：改动视图看 diff，文件视图看内容
+function renderRightPane() {
+  if (state.browse === 'files') renderBrowseFile();
+  else renderSelectedFile();
+}
+
+function renderBrowserPane() {
+  const head = document.querySelector('.pane-head');
+  const treePane = document.querySelector('.file-tree');
+  if (!head || !treePane) return;
+
+  head.innerHTML = paneHeadHtml();
+
+  if (state.browse === 'files') {
+    treePane.classList.add('browse-tree');
+    // prize add by yanliang for 「文件」搜索：左栏正文统一由 fileSidebarHtml 决定（命中列表 / 目录树）, 20261026-start
+    treePane.innerHTML = fileSidebarHtml();
+    if (!state.fileQuery.trim() && !state.treeCache.has('')) loadTreeDir('');
+    ensureSearchReady();
+    // prize add by yanliang for 「文件」搜索：左栏正文统一由 fileSidebarHtml 决定（命中列表 / 目录树）, 20261026-end
+  } else {
+    treePane.classList.remove('browse-tree');
+    treePane.innerHTML = renderTreeNode(buildFileTree(state.files || []), 0);
+    applyFilter();
+  }
+  renderRightPane();
+}
+
+// 只请求一层：展开哪个目录才读哪个，仓库再大也只多一次 ls-tree
+// 同一目录的并发请求共用一个 Promise（切 tab 时会被两处同时触发）
+async function loadTreeDir(dirPath, silent) {
+  const key = dirPath || '';
+  let pending = state.treeLoading.get(key);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const data = await api('tree', { path: key, rev: browseRev() });
+        state.treeCache.set(key, data);
+      } catch (err) {
+        toast(err.message, true);
+        state.treeCache.set(key, { dirs: [], files: [], error: err.message });
+      } finally {
+        state.treeLoading.delete(key);
+      }
+    })();
+    state.treeLoading.set(key, pending);
+  }
+  await pending;
+  // silent 交给调用方统一重绘（定位时要连开好几层，避免每层都闪一次）
+  if (!silent && state.browse === 'files') repaintBrowseTree();
+}
+
+function renderBrowseNodes(dirPath, depth) {
+  const data = state.treeCache.get(dirPath);
+  if (!data) return '';
+  const pad = 8 + depth * 13;
+  let html = '';
+  for (const d of data.dirs) {
+    const open = state.treeOpen.has(d.path);
+    html += `<div class="bnode dir${open ? ' open' : ''}" data-bdir="${esc(d.path)}" style="padding-left:${pad}px">
+      <span class="bcaret">${open ? '▾' : '▸'}</span><span class="bname">${esc(d.name)}</span></div>`;
+    if (open) {
+      html += state.treeCache.has(d.path)
+        ? renderBrowseNodes(d.path, depth + 1)
+        : `<div class="bnode-load" style="padding-left:${pad + 13}px">读取中…</div>`;
+    }
+  }
+  for (const f of data.files) {
+    // prize add by yanliang for 文件树上标出哪些文件已有解释文档, 20261024-start
+    const ex = state.explainIndex[f.path] ? '<i class="bex-dot" title="已有解释文档"></i>' : '';
+    // prize add by yanliang for 文件树上标出哪些文件已有解释文档, 20261024-end
+    html += `<div class="bnode file${f.path === state.browseSel ? ' on' : ''}" data-bfile="${esc(
+      f.path
+    )}" style="padding-left:${pad}px" title="${esc(f.path)}">
+      <span class="bcaret"></span><span class="bname">${esc(f.name)}</span>${ex}</div>`;
+  }
+  return html;
+}
+
+// prize add by yanliang for 「文件」搜索：全量路径 + 本地过滤 + 命中列表, 20261026-start
+// 目录树是按层懒加载的，没展开的目录不在缓存里，所以搜索不走 treeCache，另拉一份全量路径
+const FILE_SEARCH_MAX = 200;
+const FILE_SEARCH_DEBOUNCE = 220;
+
+// 左栏正文：改动模式是目录树，文件模式是「搜索命中列表」或目录树
+function fileSidebarHtml() {
+  if (state.browse !== 'files') return renderTreeNode(buildFileTree(state.files || []), 0);
+  if (!state.fileQuery.trim()) {
+    return state.treeCache.has('')
+      ? renderBrowseNodes('', 0)
+      : '<div class="bnode-load">读取目录…</div>';
+  }
+  return fileSearchHtml();
+}
+
+function paintFileSidebar(resetScroll) {
+  const treePane = document.querySelector('.file-tree');
+  if (!treePane) return;
+  const top = treePane.scrollTop;
+  treePane.innerHTML = fileSidebarHtml();
+  treePane.scrollTop = resetScroll ? 0 : top;
+}
+
+// 搜索交给服务端：大仓库（ALPS 全量树 147 万文件）没法把路径清单整包塞进浏览器，
+// 命中项只回前 FILE_SEARCH_MAX 条，排序也在服务端做。
+function scheduleFileSearch(delay) {
+  clearTimeout(state.fileSearchTimer);
+  state.fileSearchTimer = setTimeout(fetchFileSearch, delay);
+}
+
+async function fetchFileSearch() {
+  const raw = state.fileQuery.trim();
+  if (!raw) return;
+  const rev = browseRev();
+  const token = ++state.fileSearchToken;
+  try {
+    const data = await api('tree-search', { rev, q: raw, limit: FILE_SEARCH_MAX });
+    if (token !== state.fileSearchToken) return;
+    // 首次搜索时服务端要先把这个版本的文件清单流式读一遍，没好就过一会再问
+    if (data.state === 'building') {
+      state.fileSearchBuilding = true;
+      state.fileHits = null;
+      paintFileSidebar(true);
+      scheduleFileSearch(800);
+      return;
+    }
+    state.fileSearchBuilding = false;
+    state.fileSearchError = '';
+    state.fileHits = Array.isArray(data.items) ? data.items : [];
+    state.fileHitTotal = Number(data.total) || state.fileHits.length;
+    state.fileHitQuery = raw;
+    state.fileHitRev = rev;
+    paintFileSidebar(true);
+  } catch (err) {
+    if (token !== state.fileSearchToken) return;
+    state.fileSearchBuilding = false;
+    state.fileHits = null;
+    state.fileSearchError = `读取文件列表失败：${err.message}`;
+    paintFileSidebar(true);
+  }
+}
+
+function stopFileSearch() {
+  clearTimeout(state.fileSearchTimer);
+  state.fileSearchTimer = 0;
+  state.fileSearchToken += 1; // 作废在途请求
+}
+
+// 先转义再拼高亮，避免文件名里的 < > 被当成标签
+function hlMatch(text, at, len) {
+  if (at < 0 || !len) return esc(text);
+  return `${esc(text.slice(0, at))}<mark class="fhit">${esc(text.slice(at, at + len))}</mark>${esc(text.slice(at + len))}`;
+}
+
+function fileSearchHtml() {
+  const raw = state.fileQuery.trim();
+  if (state.fileSearchError) return `<div class="bnode-load">${esc(state.fileSearchError)}</div>`;
+  if (state.fileSearchBuilding) {
+    return '<div class="bnode-load">正在建立文件索引…<br>文件多的仓库首次搜索需要十几秒</div>';
+  }
+  if (!state.fileHits) return '<div class="bnode-load">读取文件列表…</div>';
+  if (!state.fileHits.length) return `<div class="bnode-load">没有匹配「${esc(raw)}」的文件</div>`;
+
+  const q = raw.toLowerCase();
+  const total = state.fileHitTotal || state.fileHits.length;
+  const more = total > state.fileHits.length ? ` · 仅显示前 ${state.fileHits.length} 个` : '';
+  let html = `<div class="sfile-tip">${total} 个匹配${more}</div>`;
+  for (const path of state.fileHits) {
+    const slash = path.lastIndexOf('/');
+    const name = slash >= 0 ? path.slice(slash + 1) : path;
+    const dir = slash >= 0 ? path.slice(0, slash + 1) : '';
+    const nameAt = name.toLowerCase().indexOf(q);
+    // 查询词跨了目录分隔符时名字里找不到，就到目录里找位置
+    const dirAt = nameAt < 0 ? dir.toLowerCase().indexOf(q) : -1;
+    const ex = state.explainIndex[path] ? '<i class="bex-dot" title="已有解释文档"></i>' : '';
+    html += `<div class="bnode file sfile${path === state.browseSel ? ' on' : ''}" data-sfile="${esc(
+      path
+    )}" title="${esc(path)}"><span class="sfile-dir">${
+      dir ? hlMatch(dir, dirAt, q.length) : ''
+    }</span><span class="sfile-name">${hlMatch(name, nameAt, q.length)}</span>${ex}</div>`;
+  }
+  return html;
+}
+
+function onFileSearchInput(value) {
+  state.fileQuery = value;
+  const wrap = document.querySelector('.file-search-wrap');
+  if (wrap) wrap.classList.toggle('has-q', !!value);
+  state.fileSearchError = '';
+  if (!value.trim()) {
+    stopFileSearch();
+    state.fileHits = null;
+    state.fileHitTotal = 0;
+    state.fileSearchBuilding = false;
+    paintFileSidebar(true);
+    return;
+  }
+  paintFileSidebar(true); // 先用上一轮命中顶着，防抖后再发请求
+  scheduleFileSearch(FILE_SEARCH_DEBOUNCE);
+}
+
+// 有查询但还没拿到命中时补一次；重绘左栏、换版本后也调它
+function ensureSearchReady() {
+  const raw = state.fileQuery.trim();
+  if (!raw || state.fileSearchBuilding) return;
+  if (state.fileHits && state.fileHitQuery === raw && state.fileHitRev === browseRev()) return;
+  scheduleFileSearch(0);
+}
+
+function clearFileSearch(focus) {
+  if (!state.fileQuery) return false;
+  state.fileQuery = '';
+  const wrap = document.querySelector('.file-search-wrap');
+  if (wrap) wrap.classList.remove('has-q');
+  const input = $('#fileSearch');
+  if (input) {
+    input.value = '';
+    if (focus) input.focus();
+  }
+  stopFileSearch();
+  state.fileHits = null;
+  state.fileHitTotal = 0;
+  state.fileSearchBuilding = false;
+  state.fileSearchError = '';
+  paintFileSidebar(true);
+  return true;
+}
+// prize add by yanliang for 「文件」搜索：服务端建索引 + 服务端过滤 + 命中列表, 20261026-end
+
+function treeClickNode(el) {
+  const dir = el.closest('[data-bdir]');
+  if (dir) {
+    const path = dir.dataset.bdir;
+    if (state.treeOpen.has(path)) state.treeOpen.delete(path);
+    else {
+      state.treeOpen.add(path);
+      if (!state.treeCache.has(path)) loadTreeDir(path);
+    }
+    const treePane = document.querySelector('.file-tree');
+    if (treePane) treePane.innerHTML = renderBrowseNodes('', 0);
+    return true;
+  }
+  // prize add by yanliang for 「文件」搜索：命中列表的行与目录树的行走同一条打开逻辑, 20261026-start
+  const file = el.closest('[data-bfile]') || el.closest('[data-sfile]');
+  if (file) {
+    // prize add by yanliang for 文件编辑器：切文件前确认放弃未保存的修改, 20261024-start
+    if (!confirmLeaveEdit()) return true;
+    // prize add by yanliang for 文件编辑器：切文件前确认放弃未保存的修改, 20261024-end
+    state.browseSel = file.dataset.bfile || file.dataset.sfile;
+    // prize add by yanliang for 切文件时清掉上一个文件的解释状态, 20261024-start
+    state.explainMode = false;
+    state.explainStatus = null;
+    // prize add by yanliang for 切文件时清掉上一个文件的解释状态, 20261024-end
+    document.querySelectorAll('.bnode.file.on').forEach((n) => n.classList.remove('on'));
+    file.classList.add('on');
+    renderBrowseFile();
+    return true;
+  }
+  return false;
+}
+
+// prize add by yanliang for 代码语法高亮（零依赖，逐行状态机，支持跨行注释/字符串）, 20261023-start
+const HL_LANG = {
+  js: 'js', mjs: 'js', cjs: 'js', jsx: 'js',
+  ts: 'ts', tsx: 'ts',
+  java: 'java', kt: 'java', kts: 'java', gradle: 'java',
+  go: 'go',
+  c: 'c', h: 'c', cc: 'c', cpp: 'c', cxx: 'c', hpp: 'c',
+  py: 'py',
+  sh: 'sh', bash: 'sh', zsh: 'sh', bat: 'sh', cmd: 'sh',
+  xml: 'xml', html: 'xml', htm: 'xml', svg: 'xml', vue: 'xml',
+  css: 'css', scss: 'css', less: 'css',
+  json: 'json',
+  sql: 'sql',
+  yml: 'yaml', yaml: 'yaml',
+};
+
+const HL_KW = {
+  js:
+    'const let var function return if else for while do break continue class extends new this super import export from default async await try catch finally throw typeof instanceof in of delete void yield switch case static get set null true false undefined NaN',
+  ts:
+    'const let var function return if else for while do break continue class extends new this super import export from default async await try catch finally throw typeof instanceof in of delete void yield switch case static get set null true false undefined interface type enum implements public private protected readonly declare namespace abstract as satisfies keyof infer never unknown any',
+  java:
+    'public private protected static final abstract class interface enum extends implements new return if else for while do switch case break continue try catch finally throw throws import package this super void int long double float boolean char byte short null true false instanceof synchronized volatile transient native default record var final',
+  go:
+    'package import func var const type struct interface map chan go defer return if else for range switch case break continue fallthrough select default nil true false string int int64 int32 float64 float32 bool byte rune error make new len cap append panic recover',
+  c:
+    'int char float double void long short unsigned signed struct union enum typedef static const extern return if else for while do switch case break continue goto sizeof volatile register inline NULL nullptr class namespace using template typename public private protected virtual override new delete this true false auto constexpr include define ifndef endif pragma',
+  py:
+    'def class return if elif else for while break continue import from as pass raise try except finally with lambda yield global nonlocal assert del in is not and or None True False async await self print len range str int float dict list set tuple',
+  sh:
+    'if then else elif fi for while do done case esac function return export local readonly source echo cd exit set unset shift eval exec trap alias printf read test',
+  sql:
+    'select from where insert into values update set delete create table drop alter add index join left right inner outer on group by order having limit offset as and or not null distinct count sum avg min max case when then end',
+  json: 'true false null',
+  yaml: 'true false null yes no on off',
+};
+
+// 简体规则表：行注释前缀 / 块注释 / 字符串引号 / 关键字集合
+const HL_SYN = {
+  js: { line: '//', block: ['/*', '*/'], quotes: '"\'`', kw: 'js', ml: '`' },
+  ts: { line: '//', block: ['/*', '*/'], quotes: '"\'`', kw: 'ts', ml: '`' },
+  java: { line: '//', block: ['/*', '*/'], quotes: '"\'', kw: 'java' },
+  go: { line: '//', block: ['/*', '*/'], quotes: '"`', kw: 'go', ml: '`' },
+  c: { line: '//', block: ['/*', '*/'], quotes: '"\'', kw: 'c' },
+  py: { line: '#', block: null, quotes: '"\'', kw: 'py' },
+  sh: { line: '#', block: null, quotes: '"\'', kw: 'sh' },
+  sql: { line: '--', block: ['/*', '*/'], quotes: "'\"", kw: 'sql' },
+  xml: { line: null, block: ['<!--', '-->'], quotes: '"\'', kw: null },
+  css: { line: null, block: ['/*', '*/'], quotes: '"\'', kw: null },
+  json: { line: null, block: null, quotes: '"', kw: 'json' },
+  yaml: { line: '#', block: null, quotes: '"\'', kw: 'yaml' },
+};
+
+const HL_MAX_LINES = 4000;
+const HL_KW_SETS = new Map();
+function hlKwSet(name) {
+  if (!name) return null;
+  if (!HL_KW_SETS.has(name)) {
+    HL_KW_SETS.set(name, new Set(String(HL_KW[name] || '').split(/\s+/).filter(Boolean)));
+  }
+  return HL_KW_SETS.get(name);
+}
+
+function langOf(p) {
+  const ext = String(p || '').split('.').pop().toLowerCase();
+  return HL_LANG[ext] || '';
+}
+
+// 逐行扫描；st 在行间传递，保证跨行的 /* */ 与模板字符串也能正确着色
+function hlLine(line, syn, kw, st) {
+  let out = '';
+  let i = 0;
+  const n = line.length;
+  const span = (cls, text) => (cls ? `<span class="tk tk-${cls}">${esc(text)}</span>` : esc(text));
+
+  while (i < n) {
+    if (st.blockEnd) {
+      const end = line.indexOf(st.blockEnd, i);
+      if (end < 0) {
+        out += span(st.blockCls, line.slice(i));
+        return out;
+      }
+      out += span(st.blockCls, line.slice(i, end + st.blockEnd.length));
+      i = end + st.blockEnd.length;
+      st.blockEnd = '';
+      st.blockCls = '';
+      continue;
+    }
+
+    if (syn.line && line.startsWith(syn.line, i)) {
+      out += span('c', line.slice(i));
+      return out;
+    }
+
+    if (syn.block && line.startsWith(syn.block[0], i)) {
+      const startAt = i + syn.block[0].length;
+      const end = line.indexOf(syn.block[1], startAt);
+      if (end < 0) {
+        out += span('c', line.slice(i));
+        st.blockEnd = syn.block[1];
+        st.blockCls = 'c';
+        return out;
+      }
+      out += span('c', line.slice(i, end + syn.block[1].length));
+      i = end + syn.block[1].length;
+      continue;
+    }
+
+    const ch = line[i];
+    if (syn.quotes.includes(ch)) {
+      let j = i + 1;
+      let closed = false;
+      while (j < n) {
+        if (line[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (line[j] === ch) {
+          j++;
+          closed = true;
+          break;
+        }
+        j++;
+      }
+      if (j > n) j = n;
+      out += span('s', line.slice(i, j));
+      if (!closed && syn.ml === ch) {
+        st.blockEnd = ch;
+        st.blockCls = 's';
+      }
+      i = j;
+      continue;
+    }
+
+    // 数字（含 0x、小数、指数、常见后缀）
+    if (ch >= '0' && ch <= '9') {
+      let j = i;
+      while (j < n && /[0-9a-fA-FxX._]/.test(line[j])) j++;
+      if (j < n && /[eE]/.test(line[j]) && /[0-9+-]/.test(line[j + 1] || '')) {
+        j += 2;
+        while (j < n && /[0-9]/.test(line[j])) j++;
+      }
+      while (j < n && /[a-zA-Z]{1,2}$/.test(line.slice(i, j)) && /[flFLuUL]/.test(line[j])) j++;
+      out += span('n', line.slice(i, j));
+      i = j;
+      continue;
+    }
+
+    if (/[A-Za-z_$@]/.test(ch)) {
+      // 从 i+1 起扫，@ 这类前缀字符本身也算 token，否则 i 不前进会死循环
+      let j = i + 1;
+      while (j < n && /[\w$]/.test(line[j])) j++;
+      const word = line.slice(i, j);
+      i = j;
+      const bare = word.replace(/^@/, '');
+      const after = line[i];
+      if (kw && kw.has(bare)) out += span('k', word);
+      else if (word.startsWith('@')) out += span('a', word);
+      else if (/^[A-Z][A-Za-z0-9_]*$/.test(bare)) out += span('t', word);
+      else if (after === '(') out += span('f', word);
+      else out += esc(word);
+      continue;
+    }
+
+    out += esc(ch);
+    i++;
+  }
+  return out;
+}
+
+function hlLines(lines, lang) {
+  const syn = HL_SYN[lang];
+  if (!syn) return null;
+  const kw = hlKwSet(syn.kw);
+  const st = { blockEnd: '', blockCls: '' };
+  const out = new Array(lines.length);
+  for (let i = 0; i < lines.length; i++) out[i] = hlLine(lines[i], syn, kw, st);
+  return out;
+}
+// prize add by yanliang for 代码语法高亮（零依赖，逐行状态机，支持跨行注释/字符串）, 20261023-end
+
+function fmtSize(n) {
+  const b = Number(n) || 0;
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function renderCodeView(text, filePath) {
+  const lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
+  const MAX = 6000;
+  const cut = lines.length > MAX;
+  const show = cut ? lines.slice(0, MAX) : lines;
+  const lang = langOf(filePath);
+  // 大文件不上色：span 太多会把排版拖慢
+  const hl = lang && show.length <= HL_MAX_LINES ? hlLines(show, lang) : null;
+  const w = String(show.length).length;
+  // 两个 pre：一个放行号、一个放代码。比「每行一个 div」的节点数少一个量级
+  const gutter = show.map((_l, i) => i + 1).join('\n');
+  const code = hl ? hl.join('\n') : esc(show.join('\n'));
+  const tips = [];
+  if (cut) tips.push(`文件较大，只显示前 ${MAX} 行（共 ${lines.length} 行）`);
+  else if (lang && !hl) tips.push(`超过 ${HL_MAX_LINES} 行，已关闭语法高亮`);
+  const tip = tips.length ? `<div class="fv-cut">${tips.join('　')}</div>` : '';
+  return `<div class="file-view${state.wrap ? ' wrap' : ''}" style="--fv-w:${w}"><pre class="fv-gutter">${gutter}</pre><pre class="fv-code">${code}</pre></div>${tip}`;
+}
+
+// prize add by yanliang for AI 解释：按钮状态、发起请求、文档渲染与轮询, 20261024-start
+const EXPLAIN_TTL_MS = 5 * 60 * 1000;
+
+// 状态优先级：精确状态（已查过）> 排队 > 索引里有文档 > 没有
+function explainKindOf(rel) {
+  const st = state.explainStatus;
+  if (st && st.path === rel && st.state && st.state !== 'none') return st.state;
+  const pend = state.explainPending[rel];
+  if (pend && !pend.failed) return 'pending';
+  if (pend && pend.failed) return 'failed';
+  if (state.explainIndex[rel]) return 'ready';
+  return 'none';
+}
+
+function explainBtnHtml(rel, kind, showing) {
+  if (kind === 'pending') {
+    const since = (state.explainPending[rel] || {}).requestedAt;
+    const wait = since ? relTime(since) : '';
+    const tooLong = !!since && Date.now() - new Date(since).getTime() > EXPLAIN_TTL_MS;
+    return `<button class="btn tiny explain-btn pending" id="explainBtn" disabled title="${
+      tooLong
+        ? '排队超过 5 分钟还没处理：切到 WorkBuddy 说一句「处理待办」'
+        : '已排队，切到 WorkBuddy 说一句「处理待办」即可生成'
+    }">解释中…${wait ? ` ${wait}` : ''}</button>`;
+  }
+  if (kind === 'failed') {
+    return '<button class="btn tiny explain-btn failed" id="explainBtn" title="上次生成失败，重新发起一次">重试解释</button>';
+  }
+  if (kind === 'ready' || kind === 'stale') {
+    const dot = kind === 'stale' ? '<i class="ex-dot" title="代码已变更，这份解释可能过期"></i>' : '';
+    const title = showing
+      ? '回到源码'
+      : kind === 'stale'
+        ? '代码已变更，建议对照阅读或重新生成'
+        : '查看已生成的解释文档';
+    return `<button class="btn tiny explain-btn ready" id="explainBtn" title="${title}">${
+      showing ? '看源码' : '看解释'
+    }${dot}</button>`;
+  }
+  return '<button class="btn tiny explain-btn" id="explainBtn" title="由 WorkBuddy 读取这个文件并生成对照解释文档">去解释</button>';
+}
+
+async function loadExplainIndex(silent) {
+  if (!state.repo) return;
+  try {
+    const data = await api('explain-index');
+    state.explainIndex = data.entries || {};
+    state.explainPending = data.pending || {};
+  } catch (err) {
+    if (!silent) toast('解释索引读取失败：' + err.message, true);
+    return;
+  }
+  if (Object.keys(state.explainPending).length) startExplainPoll();
+}
+
+// 单个文件的精确状态：只有这里才知道 blob 有没有变（全树逐个算哈希太贵）
+async function refreshExplainStatus(rel) {
+  if (!state.repo || !rel) return;
+  try {
+    const st = await api('explain-status', { path: rel });
+    if (state.browseSel !== rel) return;
+    state.explainStatus = st;
+  } catch {
+    state.explainStatus = null;
+  }
+  patchExplainBtn();
+}
+
+// 只换掉按钮本身，避免整块重绘把滚动位置和选中态一起冲掉
+function patchExplainBtn() {
+  const old = $('#explainBtn');
+  const rel = state.browseSel;
+  if (!old || !rel) return;
+  const holder = document.createElement('span');
+  holder.innerHTML = explainBtnHtml(rel, explainKindOf(rel), state.explainMode);
+  const next = holder.firstElementChild;
+  if (next) old.replaceWith(next);
+}
+
+async function requestExplain(rel) {
+  const btn = $('#explainBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+  }
+  try {
+    const data = await postApi('explain-request', { path: rel });
+    state.explainStatus = null;
+    if (data.state === 'ready') {
+      await loadExplainIndex(true);
+      toast('这个文件已有解释，直接看就行');
+      patchExplainBtn();
+      return;
+    }
+    const req = data.request || {};
+    state.explainPending[rel] = { id: req.id, requestedAt: req.requestedAt, blob: req.blob };
+    toast('已排队：切到 WorkBuddy 说一句「处理待办」');
+    patchExplainBtn();
+    startExplainPoll();
+  } catch (err) {
+    toast('发起失败：' + err.message, true);
+    patchExplainBtn();
+  }
+}
+
+// 生成完成后按钮要自动从「解释中」变成「看解释」，轮询只做这一件事
+function startExplainPoll() {
+  if (state.explainPoll) return;
+  state.explainPoll = setInterval(async () => {
+    const before = Object.keys(state.explainPending).length;
+    await loadExplainIndex(true);
+    const after = Object.keys(state.explainPending).length;
+    // 有请求落地了，树上补上解释标记
+    if (after < before && state.browse === 'files') repaintBrowseTree();
+    const rel = state.browseSel;
+    if (rel) {
+      // 排队清空后才去问精确状态，否则会把按钮闪回「去解释」
+      if (state.explainPending[rel]) patchExplainBtn();
+      else await refreshExplainStatus(rel);
+    }
+    if (!Object.keys(state.explainPending).length) {
+      clearInterval(state.explainPoll);
+      state.explainPoll = null;
+    }
+  }, 2500);
+}
+
+// prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-start
+// 仓库路径由服务端返回，已是绝对路径；这里只做拼接和斜杠归一，不碰磁盘
+function absOf(rel) {
+  const repo = String(state.repo || '')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '');
+  const clean = String(rel || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '');
+  if (!repo || !clean) return '';
+  return `${repo}/${clean}`;
+}
+
+function explainPathRow(label, rel) {
+  const abs = absOf(rel);
+  if (!abs) return '';
+  return `<div class="ex-path-row">
+      <span class="ex-path-k">${esc(label)}</span>
+      <code class="ex-path" data-reveal="${esc(rel)}" title="点击在文件夹中显示">${esc(abs)}</code>
+      <button class="ex-reveal" data-reveal="${esc(rel)}" title="在文件夹中显示">↗</button>
+    </div>`;
+}
+
+async function revealPath(rel) {
+  if (!rel) return;
+  try {
+    const data = await postApi('reveal', { path: rel });
+    toast('已定位到：' + data.dir);
+  } catch (err) {
+    // 服务端进程还没重启时，旧代码里没有这个路由，返回的就是「未知接口」
+    const msg = /未知接口/.test(err.message) ? '服务需要重启一次（新版接口还没加载）' : err.message;
+    toast('打开位置失败：' + msg, true);
+  }
+}
+// prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-end
+
+async function renderExplainDoc(rel, entry) {
+  const body = $('#diffPaneBody');
+  if (!body) return;
+  const token = ++state.explainDocToken;
+  const docPath = entry.doc || `.gdv/explain/${rel}.md`;
+  try {
+    const data = await api('file', { path: docPath, rev: 'worktree' });
+    if (token !== state.explainDocToken) return;
+    if (data.binary || data.tooLarge) {
+      body.innerHTML = '<div class="empty-note">解释文档读不出来（二进制或超过 2MB）</div>';
+      return;
+    }
+    const meta = [
+      entry.blob ? `blob ${String(entry.blob).slice(0, 7)}` : '',
+      entry.commit ? `commit ${String(entry.commit).slice(0, 7)}` : '',
+      entry.generatedAt ? fullTime(entry.generatedAt) : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const related = (entry.related || []).length
+      ? `<span class="ex-related">关联：${entry.related
+          .map((p) => `<a href="#" data-explain-file="${esc(p)}">${esc(p)}</a>`)
+          .join('、')}</span>`
+      : '';
+    // prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-start
+    const paths = [explainPathRow('源文件', rel), explainPathRow('解释文档', docPath)]
+      .filter(Boolean)
+      .join('');
+    // prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-end
+    const stale = explainKindOf(rel) === 'stale';
+    body.innerHTML = `
+      ${paths ? `<div class="explain-paths">${paths}</div>` : ''}
+      ${
+        stale
+          ? '<div class="explain-banner">代码已变更，这份解释可能已经过期，建议先看「去解释」重新生成。</div>'
+          : ''
+      }
+      ${meta || related ? `<div class="explain-meta"><span>${esc(meta)}</span>${related}</div>` : ''}
+      <article class="md-view explain-view">${markdownToHtml(data.content)}</article>`;
+    body.scrollTop = 0;
+  } catch (err) {
+    if (token !== state.explainDocToken) return;
+    body.innerHTML = `<div class="empty-note">解释文档读取失败：${esc(
+      err.message
+    )}<br />它应该在 <code>.gdv/explain/</code> 下，可能被删掉了，可以重新发起解释。</div>`;
+  }
+}
+
+// 解释文档里点关联文件：逐层展开目录并选中
+async function jumpToBrowseFile(rel) {
+  if (!rel) return;
+  if (state.browse !== 'files') {
+    state.browse = 'files';
+    localStorage.setItem('gdv.browse', 'files');
+    renderBrowserPane();
+  }
+  state.explainMode = false;
+  state.explainStatus = null;
+  state.browseSel = rel;
+  const parts = rel.split('/');
+  let cur = '';
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = cur ? `${cur}/${parts[i]}` : parts[i];
+    state.treeOpen.add(cur);
+    if (!state.treeCache.has(cur)) await loadTreeDir(cur, true);
+  }
+  repaintBrowseTree();
+  scrollToBrowseSel();
+  renderBrowseFile();
+}
+// prize add by yanliang for AI 解释：按钮状态、发起请求、文档渲染与轮询, 20261024-end
+
+// prize add by yanliang for 文件编辑器：工作区文件就地编辑与保存, 20261024-start
+// 只在「文件」视图 + 工作区版本开放：提交详情里看到的是历史内容，改了会误导
+function isWorktreeView() {
+  return !state.detail || state.detail.kind === 'working';
+}
+
+function canEditFile(path) {
+  return state.browse === 'files' && !!path && isWorktreeView();
+}
+
+function lineNumbersOf(n) {
+  let out = '';
+  for (let i = 1; i <= n; i++) out += i === n ? String(i) : i + '\n';
+  return out;
+}
+
+// 编辑态的状态条：只改文字和 class，不重排 DOM，敲键时不会闪
+function setEditState() {
+  const ta = $('#edContent');
+  const st = $('#edState');
+  if (!ta) return;
+  state.editDirty = ta.value !== state.editBase;
+  if (st) {
+    st.textContent = state.editDirty ? '● 未保存' : '编辑中';
+    st.classList.toggle('dirty', state.editDirty);
+  }
+}
+
+// 行号列与 textarea 各自滚动，靠 scrollTop 对齐；行数变了才重建行号文本
+function syncEditorGutter() {
+  const ta = $('#edContent');
+  const g = $('#edGutter');
+  if (!ta || !g) return;
+  const lines = ta.value.split('\n').length;
+  if (Number(g.dataset.lines) !== lines) {
+    g.dataset.lines = String(lines);
+    g.textContent = lineNumbersOf(lines);
+  }
+  g.scrollTop = ta.scrollTop;
+}
+
+// prize add by yanliang for 编辑定位：预览 ↔ 编辑器双向带位置, 20261024-start
+// 两边都用「行号 + 行内偏移」表示位置，滚到半行也能还原。
+// textarea 有 padding-top，换算时要减掉，否则会整体偏一行高。
+
+const ANCHOR_LINE_HEIGHT = 19;
+
+function lineHeightOf(el) {
+  const lh = parseFloat(getComputedStyle(el).lineHeight || '0') || 0;
+  return lh > 0 ? lh : ANCHOR_LINE_HEIGHT;
+}
+
+function anchorFrom(scroller, lineHeight, padTop, totalLines) {
+  const rel = Math.max(0, (scroller.scrollTop || 0) - padTop);
+  const line = Math.min(totalLines, Math.max(1, Math.floor(rel / lineHeight) + 1));
+  return { line, offset: rel - (line - 1) * lineHeight };
+}
+
+function scrollTopOf(anchor, lineHeight, padTop) {
+  return Math.max(0, padTop + (anchor.line - 1) * lineHeight + (anchor.offset || 0));
+}
+
+function paddingTopOf(el) {
+  return parseFloat(getComputedStyle(el).paddingTop || '0') || 0;
+}
+
+// 预览 → 编辑器：源码视图滚到哪一行，编辑器就开到哪一行
+function captureBrowseAnchor() {
+  const body = $('#diffPaneBody');
+  if (!body) return null;
+  const gutter = body.querySelector('.fv-gutter');
+  if (!gutter) return null; // markdown 预览没有行号柱，排版正文和源码行号对不上
+  const lineCount = gutter.textContent ? gutter.textContent.split('\n').length : 0;
+  if (!lineCount) return null;
+
+  // 自动换行时行号柱不折行、代码在折行，两者高度不再一一对应，只能按比例粗定位
+  if (state.wrap) {
+    const max = body.scrollHeight - body.clientHeight;
+    return { ratio: max > 0 ? body.scrollTop / max : 0, line: 0 };
+  }
+  return anchorFrom(body, lineHeightOf(gutter), 0, lineCount);
+}
+
+function applyEditorAnchor(ta) {
+  const anchor = state.editAnchor;
+  state.editAnchor = null;
+  if (!ta) return;
+  if (!anchor) {
+    ta.setSelectionRange(0, 0);
+    return;
+  }
+  if (!anchor.line) {
+    ta.setSelectionRange(0, 0);
+    ta.focus({ preventScroll: true });
+    ta.scrollTop = anchor.ratio * Math.max(0, ta.scrollHeight - ta.clientHeight);
+    return;
+  }
+  const lines = ta.value.split('\n');
+  let pos = 0;
+  for (let i = 0; i < anchor.line - 1 && i < lines.length; i++) pos += lines[i].length + 1;
+  ta.setSelectionRange(pos, pos);
+  // preventScroll：否则 focus 会先把光标滚进来，再被下面的 scrollTop 覆盖一次，视觉上会闪
+  ta.focus({ preventScroll: true });
+  ta.scrollTop = scrollTopOf(anchor, lineHeightOf(ta), paddingTopOf(ta));
+}
+
+// 编辑器 → 预览：取消 / 保存后回到同一行
+function captureEditorAnchor() {
+  const ta = $('#edContent');
+  if (!ta) return null;
+  const total = ta.value ? ta.value.split('\n').length : 1;
+  return anchorFrom(ta, lineHeightOf(ta), paddingTopOf(ta), total);
+}
+
+function applyBrowseAnchor() {
+  const anchor = state.browseAnchor;
+  state.browseAnchor = null;
+  if (!anchor) return;
+  const body = $('#diffPaneBody');
+  if (!body) return;
+  const gutter = body.querySelector('.fv-gutter');
+  if (!gutter) return; // markdown 预览下没有行号柱，放弃精确对位
+  body.scrollTop = scrollTopOf(anchor, lineHeightOf(gutter), 0);
+}
+// prize add by yanliang for 编辑定位：预览 ↔ 编辑器双向带位置, 20261024-end
+
+async function enterEdit(path) {
+  try {
+    // prize add by yanliang for 编辑定位：进编辑器前先记住预览滚到哪一行, 20261024-start
+    // 必须在 await 之前抓：await 之后右栏可能已被别的渲染覆盖
+    const anchor = captureBrowseAnchor();
+    // prize add by yanliang for 编辑定位：进编辑器前先记住预览滚到哪一行, 20261024-end
+    // 不带 rev：永远读工作区磁盘内容，这才是保存时要覆盖的东西
+    const data = await api('file', { path });
+    if (data.binary) return toast('二进制文件不能编辑', true);
+    if (data.tooLarge) return toast('文件超过 2MB，不支持在线编辑', true);
+    state.editing = true;
+    state.editPath = data.path || path;
+    state.editBase = String(data.content || '').replace(/\r\n?/g, '\n');
+    state.editMtime = Number(data.mtimeMs) || 0;
+    state.editDirty = false;
+    // prize add by yanliang for 编辑定位：把预览位置交给编辑器, 20261024-start
+    state.editAnchor = anchor;
+    // prize add by yanliang for 编辑定位：把预览位置交给编辑器, 20261024-end
+    renderBrowseFile();
+    toast('编辑中 · Ctrl+S 保存 · Esc 取消');
+  } catch (err) {
+    toast('打开编辑器失败：' + err.message, true);
+  }
+}
+
+function resetEditState() {
+  state.editing = false;
+  state.editPath = '';
+  state.editBase = '';
+  state.editDirty = false;
+  state.editMtime = 0;
+  // prize add by yanliang for 编辑定位：锚点只在一次「预览 → 编辑」之间有效, 20261024-start
+  state.editAnchor = null;
+  // prize add by yanliang for 编辑定位：锚点只在一次「预览 → 编辑」之间有效, 20261024-end
+}
+
+function exitEdit() {
+  if (state.editDirty && !confirm('有未保存的修改，确定放弃？')) return false;
+  // prize add by yanliang for 编辑定位：回预览前记住编辑器停在哪一行, 20261024-start
+  state.browseAnchor = captureEditorAnchor();
+  // prize add by yanliang for 编辑定位：回预览前记住编辑器停在哪一行, 20261024-end
+  resetEditState();
+  renderBrowseFile();
+  return true;
+}
+
+async function saveEdit() {
+  const ta = $('#edContent');
+  if (!ta || !state.editPath) return;
+  const btn = $('#edSave');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '保存中…';
+  }
+  try {
+    const data = await postApi('save-file', {
+      path: state.editPath,
+      content: ta.value,
+      baseMtimeMs: state.editMtime,
+    });
+    // prize add by yanliang for 编辑定位：保存后回预览要停在同一行, 20261024-start
+    state.browseAnchor = captureEditorAnchor();
+    // prize add by yanliang for 编辑定位：保存后回预览要停在同一行, 20261024-end
+    resetEditState();
+    toast(data.unchanged ? '内容没有变化' : '已保存');
+    // prize add by yanliang for 文件编辑器：保存后立刻刷新仓库卡片与工作区改动数据, 20261024-start
+    await refreshAfterSave();
+    // prize add by yanliang for 文件编辑器：保存后立刻刷新仓库卡片与工作区改动数据, 20261024-end
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '保存';
+    }
+    toast('保存失败：' + err.message, true);
+  }
+}
+
+// prize add by yanliang for 文件编辑器：保存后的刷新收口（卡片 / 改动列表 / 当前视图）, 20261024-start
+// 工作区数据（左栏「改动」徽标、改动列表、提交列表里的条数）都来自 state.detail，
+// 所以保存后必须重拉一次，否则界面会停在「没有改动」的旧状态。
+async function refreshAfterSave() {
+  try {
+    const info = await fetch(`/api/repo?repo=${encodeURIComponent(state.repo)}`).then((r) => r.json());
+    if (info && !info.error) {
+      state.info = info;
+      renderRepoCard();
+    }
+  } catch (_) {
+    /* 卡片刷新失败不影响已保存的结果 */
+  }
+
+  if (state.detail && state.detail.kind === 'working') {
+    // 刚编辑过的文件在「改动」里选中，切过去就能直接看到自己刚才的修改
+    if (state.browseSel) state.selected = state.browseSel;
+    // refreshWorking 内部按当前 browse 模式重绘右栏，文件视图不会被切走
+    await refreshWorking();
+  } else {
+    // 还没加载过工作区改动：只重绘当前文件，切到「改动」时再补拉（见 switchBrowse）
+    state.workingStale = true;
+    renderBrowseFile();
+  }
+}
+// prize add by yanliang for 文件编辑器：保存后的刷新收口（卡片 / 改动列表 / 当前视图）, 20261024-end
+
+// 切文件前的守卫：有改动就先问一句，避免点一下树就把稿子丢了
+function confirmLeaveEdit() {
+  if (!state.editing || !state.editDirty) return true;
+  return confirm('有未保存的修改，确定放弃？');
+}
+
+// 右侧面板要被别的视图（提交详情 / 比对 / 工作区 diff）接管前调用
+function leaveEditorFor() {
+  if (!state.editing) return true;
+  if (!confirmLeaveEdit()) return false;
+  resetEditState();
+  return true;
+}
+
+function textBytes(s) {
+  try {
+    return new TextEncoder().encode(s).length;
+  } catch (_) {
+    return s.length;
+  }
+}
+
+function onEditorKeydown(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    exitEdit();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    saveEdit();
+    return;
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const ta = e.target;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === end) {
+      ta.setRangeText('    ', start, end, 'end');
+    } else {
+      // 多行选中时整体右移一个缩进，而不是把整块替换成一个 Tab
+      const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+      const block = ta.value.slice(lineStart, end);
+      ta.setRangeText(block.replace(/(^|\n)(?=.)/g, '$1    '), lineStart, end, 'select');
+    }
+    setEditState();
+    syncEditorGutter();
+  }
+}
+
+function renderEditorPane(pane, path) {
+  const lineCount = state.editBase ? state.editBase.split('\n').length : 1;
+  pane.classList.remove('split-mode');
+  pane.innerHTML = `
+    <div class="diff-pane-head" data-file="${esc(path)}">
+      <span class="pane-file-path" title="${esc(absOf(path) || path)}">${esc(path)}</span>
+      <span class="ed-state${state.editDirty ? ' dirty' : ''}" id="edState">${
+        state.editDirty ? '● 未保存' : '编辑中'
+      }</span>
+      <button class="btn tiny primary" id="edSave" title="保存到工作区（Ctrl+S）">保存</button>
+      <button class="btn tiny" id="edCancel" title="放弃修改（Esc）">取消</button>
+      <span class="file-stat" id="fvStat"><span class="fv-meta">${fmtSize(
+        textBytes(state.editBase)
+      )} · ${lineCount} 行</span></span>
+    </div>
+    <div class="diff-pane-body ed-body" id="diffPaneBody">
+      <div class="ed-wrap">
+        <pre class="ed-gutter" id="edGutter" data-lines="0"></pre>
+        <textarea class="ed-area" id="edContent" spellcheck="false" autocomplete="off"
+          autocapitalize="off" autocorrect="off" wrap="off"></textarea>
+      </div>
+    </div>`;
+
+  const ta = $('#edContent');
+  ta.value = state.editBase;
+  ta.addEventListener('input', () => {
+    setEditState();
+    syncEditorGutter();
+  });
+  ta.addEventListener('scroll', syncEditorGutter);
+  ta.addEventListener('keydown', onEditorKeydown);
+  syncEditorGutter();
+  // prize add by yanliang for 编辑定位：从预览位置接管光标与滚动, 20261024-start
+  applyEditorAnchor(ta);
+  syncEditorGutter();
+  // prize add by yanliang for 编辑定位：从预览位置接管光标与滚动, 20261024-end
+  renderToolbar();
+}
+// prize add by yanliang for 文件编辑器：工作区文件就地编辑与保存, 20261024-end
+
+async function renderBrowseFile() {
+  const pane = $('#diffPane');
+  if (!pane) return;
+  const path = state.browseSel;
+  if (!path) {
+    pane.innerHTML = '<div class="pane-empty">在左侧「文件」里选一个文件，这里显示它的内容</div>';
+    renderToolbar();
+    return;
+  }
+
+  // prize add by yanliang for 文件编辑器：编辑态整块换成编辑视图, 20261024-start
+  if (state.editing) {
+    if (state.editPath === path) return renderEditorPane(pane, path);
+    // 选中文件被别的入口换掉了（URL / 关联跳转）：不再追问，直接退出编辑避免状态错位
+    resetEditState();
+  }
+  // prize add by yanliang for 文件编辑器：编辑态整块换成编辑视图, 20261024-end
+
+  // prize add by yanliang for AI 解释：头部按钮 + 解释文档视图, 20261024-start
+  const kind = explainKindOf(path);
+  const entry =
+    (state.explainStatus && state.explainStatus.path === path ? state.explainStatus.entry : null) ||
+    state.explainIndex[path] ||
+    null;
+  const showDoc = state.explainMode && !!entry && (kind === 'ready' || kind === 'stale');
+  // prize add by yanliang for AI 解释：头部按钮 + 解释文档视图, 20261024-end
+
+  const md = isMarkdown(path);
+  const mdMode = md && state.mdPreview;
+  const editable = canEditFile(path) && !showDoc;
+  pane.classList.remove('split-mode');
+  pane.innerHTML = `
+    <div class="diff-pane-head" data-file="${esc(path)}">
+      <span class="pane-file-path" title="${esc(absOf(path) || path)}">${esc(path)}</span>
+      ${editable ? '<button class="btn tiny edit-btn" id="editBtn" title="就地编辑这个文件并保存到工作区">编辑</button>' : ''}
+      ${explainBtnHtml(path, kind, showDoc)}
+      ${
+        md && !showDoc
+          ? `<button class="btn tiny md-toggle${mdMode ? ' on' : ''}" id="mdToggle" title="${
+              mdMode ? '显示源码' : '渲染成排版后的文档'
+            }">${mdMode ? '源码' : '预览'}</button>`
+          : ''
+      }
+      <span class="file-stat" id="fvStat"></span>
+    </div>
+    <div class="diff-pane-body${showDoc ? ' md-body' : ''}" id="diffPaneBody">${
+      showDoc ? '<div class="md-loading">读取解释…</div>' : '<div class="md-loading">读取文件…</div>'
+    }</div>
+    <div class="split-handle" id="splitHandle" style="display:none"></div>`;
+
+  // prize add by yanliang for AI 解释：解释视图只渲染文档，不再读源码, 20261024-start
+  if (showDoc) {
+    await renderExplainDoc(path, entry);
+    renderToolbar();
+    refreshExplainStatus(path);
+    return;
+  }
+  refreshExplainStatus(path);
+  // prize add by yanliang for AI 解释：解释视图只渲染文档，不再读源码, 20261024-end
+
+  const token = ++state.browseToken;
+  try {
+    const data = await api('file', { path, rev: browseFileRev() });
+    if (token !== state.browseToken) return;
+    const stat = $('#fvStat');
+    const body = $('#diffPaneBody');
+    if (!body) return;
+    if (data.binary) {
+      if (stat) stat.textContent = fmtSize(data.size);
+      // prize add by yanliang for 文件编辑器：二进制文件不提供编辑入口, 20261024-start
+      const eb = $('#editBtn');
+      if (eb) eb.remove();
+      // prize add by yanliang for 文件编辑器：二进制文件不提供编辑入口, 20261024-end
+      body.innerHTML = '<div class="binary-note">二进制文件，不显示内容</div>';
+      renderToolbar();
+      return;
+    }
+    // prize add by yanliang for 文件编辑器：超过 2MB 的文件同样不给编辑入口（服务端也会拒绝）, 20261024-start
+    if (data.tooLarge) {
+      const eb = $('#editBtn');
+      if (eb) eb.remove();
+    }
+    // prize add by yanliang for 文件编辑器：超过 2MB 的文件同样不给编辑入口（服务端也会拒绝）, 20261024-end
+    const lineCount = data.content ? data.content.split('\n').length : 0;
+    if (stat) {
+      stat.innerHTML = `<span class="fv-meta">${fmtSize(data.size)} · ${lineCount} 行</span>`;
+    }
+    if (mdMode) {
+      mdCtx = { file: data.path, rev: data.rev === 'worktree' ? '' : data.rev };
+      body.innerHTML = `<article class="md-view">${markdownToHtml(data.content)}</article>`;
+    } else {
+      body.innerHTML = renderCodeView(data.content, data.path);
+    }
+    // prize add by yanliang for 编辑定位：从编辑器回来时还原到原来那一行, 20261024-start
+    applyBrowseAnchor();
+    // prize add by yanliang for 编辑定位：从编辑器回来时还原到原来那一行, 20261024-end
+  } catch (err) {
+    if (token !== state.browseToken) return;
+    const body = $('#diffPaneBody');
+    // prize add by yanliang for 工作区读取失败时说明「文件已不在磁盘上」, 20261024-start
+    const hint =
+      browseFileRev() === 'worktree'
+        ? '<br />「文件」里显示的是磁盘上的当前内容。这个文件在工作区可能已被删除，可以到「改动」里还原。'
+        : '';
+    if (body) body.innerHTML = `<div class="empty-note">读取失败：${esc(err.message)}${hint}</div>`;
+    // prize add by yanliang for 工作区读取失败时说明「文件已不在磁盘上」, 20261024-end
+  }
+  renderToolbar();
+}
+
+// 切提交 / 刷新工作区时，文件树缓存与展开状态都作废
+function resetTreeState() {
+  state.treeCache.clear();
+  state.treeOpen.clear();
+  state.treeLoading.clear();  state.browseToken++;
+  // prize add by yanliang for 「文件」搜索：换版本后服务端命中作废（查询词保留）, 20261026-start
+  stopFileSearch();
+  state.fileHits = null;
+  state.fileHitTotal = 0;
+  state.fileHitQuery = '';
+  state.fileHitRev = '';
+  state.fileSearchError = '';
+  state.fileSearchBuilding = false;
+  // prize add by yanliang for 「文件」搜索：换版本后服务端命中作废（查询词保留）, 20261026-end
+}
+// prize add by yanliang for 仓库文件树：改动 / 文件 双模式，文件按层懒加载, 20261023-end
 
 // prize add by yanliang for 并排视图左右栏比例可拖动调整, 20261023-start
 // 比例换算成 grid 的 fr 权重：0.5 即 1fr : 1fr
@@ -876,6 +2481,14 @@ function renderDiff() {
   const d = state.detail;
   if (!d) return;
 
+  // prize add by yanliang for 换了版本才清文件树缓存，同一版本内刷新保持展开状态, 20261023-start
+  const treeRev = browseRev();
+  if (state.treeRev !== treeRev) {
+    resetTreeState();
+    state.treeRev = treeRev;
+  }
+  // prize add by yanliang for 换了版本才清文件树缓存，同一版本内刷新保持展开状态, 20261023-end
+
   const files = parsePatch(d.patch || '');
   const live = d.kind === 'working';
   const statusMap = d.status || {};
@@ -900,7 +2513,7 @@ function renderDiff() {
   scroll.dataset.del = String(sumDel);
   state.files = files;
 
-  if (!files.length) {
+  if (!files.length && state.browse !== 'files') {
     scroll.innerHTML = `<div class="skeleton">${live ? '工作区没有未提交的改动' : '这次提交没有文件改动'}</div>`;
     state.opsIndex = null;
     state.selected = '';
@@ -912,26 +2525,30 @@ function renderDiff() {
   const tree = buildFileTree(files);
   state.opsIndex = live ? buildOpsIndex(tree) : null;
   // 选中的文件若已不在列表里（切换提交、忽略后消失等），回落到树中第一个文件
+  // prize add by yanliang for 改动列表为空时不再访问 files[0]（文件视图下会走到这一行）, 20261024-start
   if (!files.some((f) => f.path === state.selected)) {
-    state.selected = firstFileInTree(tree) || files[0].path;
+    state.selected = firstFileInTree(tree) || (files.length ? files[0].path : '');
   }
+  // prize add by yanliang for 改动列表为空时不再访问 files[0]（文件视图下会走到这一行）, 20261024-end
 
   scroll.innerHTML = `
     <aside class="file-pane" id="filePane">
-      <div class="pane-head">
-        <div class="pane-head-row">
-          <span class="pane-title">改动文件</span>
-          <span class="pane-count" id="filePaneCount">${files.length}</span>
-        </div>
-        <input class="file-filter" id="fileFilter" placeholder="筛选文件…" value="${esc(state.filter)}" />
-      </div>
-      <div class="file-tree">${renderTreeNode(tree, 0)}</div>
+      <div class="pane-head">${paneHeadHtml()}</div>
+      <div class="file-tree${state.browse === 'files' ? ' browse-tree' : ''}">${fileSidebarHtml()}</div>
     </aside>
     <div class="pane-resizer" id="paneResizer" title="拖动调整文件栏宽度，双击复位"></div>
     <section class="diff-pane" id="diffPane"></section>`;
 
-  renderSelectedFile();
-  applyFilter();
+  // prize add by yanliang for 左栏「改动 / 文件」两种模式, 20261023-start
+  if (state.browse === 'files') {
+    if (!state.fileQuery.trim() && !state.treeCache.has('')) loadTreeDir('');
+    ensureSearchReady();
+    renderBrowseFile();
+  } else {
+    renderSelectedFile();
+    applyFilter();
+  }
+  // prize add by yanliang for 左栏「改动 / 文件」两种模式, 20261023-end
   // prize add by yanliang for 左侧文件目录树 + 右侧 diff 双栏布局, 20261022-end
 
   renderToolbar();
@@ -944,13 +2561,26 @@ function renderToolbar() {
   const add = scroll.dataset.add || '0';
   const del = scroll.dataset.del || '0';
 
-  $('#diffToolbar').innerHTML = `
-    <div class="seg" id="viewSeg">
+  // prize add by yanliang for 预览模式下收起源码视图相关开关, 20261023-start
+  const fileMode = state.browse === 'files';
+  const mdMode = state.mdPreview && isMarkdown(fileMode ? state.browseSel : state.selected);
+  const wrapBtn = `<button class="btn small ${state.wrap ? 'active' : ''}" id="wrapToggle" title="超长代码行自动折行">自动换行</button>`;
+  const sourceOps = state.editing
+    ? '<span class="md-hint">编辑中 · Ctrl+S 保存 · Esc 取消</span>'
+    : mdMode
+      ? '<span class="md-hint">Markdown 预览</span>'
+      : fileMode
+        ? `<span class="md-hint">${isWorktreeView() ? '仓库文件' : '仓库文件（只读）'}</span>${wrapBtn}`
+        : `<div class="seg" id="viewSeg">
       <button data-view="split" class="${state.view === 'split' ? 'on' : ''}">并排</button>
       <button data-view="inline" class="${state.view === 'inline' ? 'on' : ''}">内联</button>
     </div>
     <button class="btn small ${state.ignoreSpace ? 'active' : ''}" id="ignoreSpace" title="忽略空格与缩进变化">忽略空白</button>
-    <button class="btn small ${state.wrap ? 'active' : ''}" id="wrapToggle" title="超长代码行自动折行">自动换行</button>
+    ${wrapBtn}`;
+  // prize add by yanliang for 预览模式下收起源码视图相关开关, 20261023-end
+
+  $('#diffToolbar').innerHTML = `
+    ${sourceOps}
     <div class="toolbar-spacer"></div>
     ${
       // prize add by yanliang for 工作区视图提供整棵树的一键暂存/取消暂存, 20261022-start
@@ -1246,6 +2876,15 @@ async function openRepo(path, opts) {
     state.detail = null;
     state.compare = [];
     state.selected = '';
+    // prize add by yanliang for 换仓库时重置解释索引并重新拉取, 20261024-start
+    state.explainIndex = {};
+    state.explainPending = {};
+    state.explainMode = false;
+    state.explainStatus = null;
+    loadExplainIndex(true).then(() => {
+      if (state.browse === 'files') repaintBrowseTree();
+    });
+    // prize add by yanliang for 换仓库时重置解释索引并重新拉取, 20261024-end
     // prize add by yanliang for 换仓库时重置目录折叠状态, 20261022-start
     state.collapsedDirs.clear();
     // prize add by yanliang for 换仓库时重置目录折叠状态, 20261022-end
@@ -1407,6 +3046,9 @@ async function finderConfirm() {
 // prize add by yanliang for 目录选择器：从磁盘挑一个仓库并记住, 20261023-end
 
 async function openCommit(hash) {
+  // prize add by yanliang for 文件编辑器：右侧面板要被换掉前先确认放弃修改, 20261024-start
+  if (!leaveEditorFor()) return;
+  // prize add by yanliang for 文件编辑器：右侧面板要被换掉前先确认放弃修改, 20261024-end
   try {
     $('#detailEmpty').classList.add('hidden');
     $('#detailBody').classList.remove('hidden');
@@ -1421,6 +3063,9 @@ async function openCommit(hash) {
     state.collapsedDirs.clear();
     // prize add by yanliang for 切换提交时重置目录折叠状态, 20261022-end
     state.filter = '';
+    // prize add by yanliang for 「文件」搜索：换版本时收起搜索，避免结果与当前版本对不上, 20261026-start
+    state.fileQuery = '';
+    // prize add by yanliang for 「文件」搜索：换版本时收起搜索，避免结果与当前版本对不上, 20261026-end
 
     renderCommitList();
     renderCommitHead();
@@ -1435,6 +3080,9 @@ async function openCommit(hash) {
 }
 
 async function openWorkingTree() {
+  // prize add by yanliang for 文件编辑器：右侧面板要被换掉前先确认放弃修改, 20261024-start
+  if (!leaveEditorFor()) return;
+  // prize add by yanliang for 文件编辑器：右侧面板要被换掉前先确认放弃修改, 20261024-end
   try {
     $('#detailEmpty').classList.add('hidden');
     $('#detailBody').classList.remove('hidden');
@@ -1449,6 +3097,9 @@ async function openWorkingTree() {
     state.collapsedDirs.clear();
     // prize add by yanliang for 切换提交时重置目录折叠状态, 20261022-end
     state.filter = '';
+    // prize add by yanliang for 「文件」搜索：换版本时收起搜索，避免结果与当前版本对不上, 20261026-start
+    state.fileQuery = '';
+    // prize add by yanliang for 「文件」搜索：换版本时收起搜索，避免结果与当前版本对不上, 20261026-end
 
     renderCommitList();
     renderCommitHead();
@@ -1463,6 +3114,9 @@ async function openWorkingTree() {
 }
 
 async function openComparison(base, head) {
+  // prize add by yanliang for 文件编辑器：右侧面板要被换掉前先确认放弃修改, 20261024-start
+  if (!leaveEditorFor()) return;
+  // prize add by yanliang for 文件编辑器：右侧面板要被换掉前先确认放弃修改, 20261024-end
   try {
     $('#detailEmpty').classList.add('hidden');
     $('#detailBody').classList.remove('hidden');
@@ -1477,6 +3131,9 @@ async function openComparison(base, head) {
     state.collapsedDirs.clear();
     // prize add by yanliang for 切换提交时重置目录折叠状态, 20261022-end
     state.filter = '';
+    // prize add by yanliang for 「文件」搜索：换版本时收起搜索，避免结果与当前版本对不上, 20261026-start
+    state.fileQuery = '';
+    // prize add by yanliang for 「文件」搜索：换版本时收起搜索，避免结果与当前版本对不上, 20261026-end
 
     renderCommitList();
     renderCommitHead();
@@ -1493,7 +3150,7 @@ async function openComparison(base, head) {
 // prize add by yanliang for 执行工作区 git 操作并原地刷新, 20261022-start
 async function runGitOp(op, paths) {
   if (!paths || !paths.length) return;
-  const label = { stage: '暂存', unstage: '取消暂存', ignore: '忽略' }[op] || op;
+  const label = { stage: '暂存', unstage: '取消暂存', ignore: '忽略', discard: '还原' }[op] || op;
   try {
     const res = await postApi('git-op', { op, paths });
     toast(res.message || `${label}完成`);
@@ -1502,6 +3159,18 @@ async function runGitOp(op, paths) {
     toast(`${label}失败：${err.message}`, true);
   }
 }
+
+// prize add by yanliang for 改动详情：还原到修改之前（HEAD 版本）, 20261024-start
+// 是不可撤销操作，先问一句，并把「已暂存和未暂存都会丢」说清楚
+async function discardFile(rel) {
+  if (!rel) return;
+  const ok = confirm(
+    `还原「${rel}」到修改之前？\n\n已暂存和未暂存的改动都会被丢弃，恢复成 HEAD 版本，此操作不可撤销。`
+  );
+  if (!ok) return;
+  await runGitOp('discard', [rel]);
+}
+// prize add by yanliang for 改动详情：还原到修改之前（HEAD 版本）, 20261024-end
 
 // 只刷新工作区详情与仓库状态，保留折叠、筛选和滚动位置
 async function refreshWorking() {
@@ -1967,7 +3636,8 @@ function bindEvents() {
         const prev = $('#diffPaneBody');
         const top = prev ? prev.scrollTop : 0;
         const left = prev ? prev.scrollLeft : 0;
-        renderSelectedFile();
+        // 文件浏览模式下重绘的是文件内容，diff 模式下重绘 diff
+        renderRightPane();
         const now = $('#diffPaneBody');
         if (now) {
           now.scrollTop = top;
@@ -1994,10 +3664,65 @@ function bindEvents() {
       state.filter = e.target.value;
       applyFilter();
     }
+    // prize add by yanliang for 「文件」搜索：输入即过滤, 20261026-start
+    if (e.target.id === 'fileSearch') onFileSearchInput(e.target.value);
+    // prize add by yanliang for 「文件」搜索：输入即过滤, 20261026-end
   });
   // prize add by yanliang for 筛选框移到左侧文件栏后，改由 #diffScroll 事件委托, 20261022-end
 
+  // prize add by yanliang for 「文件」搜索：Esc 清空、Enter 打开第一条命中, 20261026-start
+  $('#diffScroll').addEventListener('keydown', (e) => {
+    if (e.target.id !== 'fileSearch') return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      clearFileSearch(true);
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = document.querySelector('.file-tree .sfile');
+      if (first) treeClickNode(first);
+    }
+  });
+  // prize add by yanliang for 「文件」搜索：Esc 清空、Enter 打开第一条命中, 20261026-end
+
   $('#diffScroll').addEventListener('click', (e) => {
+    // prize add by yanliang for 左栏「改动 / 文件」切换与文件树点击, 20261023-start
+    const tab = e.target.closest('#paneTabs [data-browse]');
+    if (tab) {
+      switchBrowse(tab.dataset.browse);
+      return;
+    }
+    // prize add by yanliang for 「文件」搜索：清空按钮 + 定位改动前先退出搜索, 20261026-start
+    if (e.target.closest('#fileSearchClear')) {
+      clearFileSearch(true);
+      return;
+    }
+    // prize add by yanliang for 「文件」搜索：清空按钮 + 定位改动前先退出搜索, 20261026-end
+    if (e.target.closest('#revealChange')) {
+      // prize add by yanliang for 「文件」搜索：命中列表会挡住目录树，定位前先退出搜索, 20261026-start
+      clearFileSearch(false);
+      // prize add by yanliang for 「文件」搜索：命中列表会挡住目录树，定位前先退出搜索, 20261026-end
+      revealInTree(state.selected).then((ok) => {
+        if (!ok) return;
+        repaintBrowseTree();
+        scrollToBrowseSel();
+        renderBrowseFile();
+      });
+      return;
+    }
+    if (treeClickNode(e.target)) return;
+    // prize add by yanliang for 左栏「改动 / 文件」切换与文件树点击, 20261023-end
+    // prize add by yanliang for 改动详情：还原到修改之前（HEAD 版本）, 20261024-start
+    const discardBtn = e.target.closest('[data-discard]');
+    if (discardBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      discardFile(discardBtn.dataset.discard);
+      return;
+    }
+    // prize add by yanliang for 改动详情：还原到修改之前（HEAD 版本）, 20261024-end
     // prize add by yanliang for 文件/目录行内的暂存、取消暂存、忽略按钮, 20261022-start
     const opBtn = e.target.closest('[data-op]');
     if (opBtn) {
@@ -2143,6 +3868,59 @@ function bindEvents() {
 
   // prize add by yanliang for 提交面板事件：遮罩关闭、勾选、amend、Ctrl+Enter 提交, 20261022-start
   document.addEventListener('click', (e) => {
+    // prize add by yanliang for 文件编辑器：编辑 / 保存 / 取消, 20261024-start
+    if (e.target.closest('#editBtn')) {
+      e.preventDefault();
+      const rel = state.browseSel;
+      if (rel) enterEdit(rel);
+      return;
+    }
+    if (e.target.closest('#edSave')) {
+      e.preventDefault();
+      saveEdit();
+      return;
+    }
+    if (e.target.closest('#edCancel')) {
+      e.preventDefault();
+      exitEdit();
+      return;
+    }
+    // prize add by yanliang for 文件编辑器：编辑 / 保存 / 取消, 20261024-end
+    // prize add by yanliang for markdown 预览/源码切换（记住偏好）, 20261023-start
+    if (e.target.closest('#mdToggle')) {
+      state.mdPreview = !state.mdPreview;
+      localStorage.setItem('gdv.mdPreview', state.mdPreview ? '1' : '0');
+      renderRightPane();
+      return;
+    }
+    // prize add by yanliang for markdown 预览/源码切换（记住偏好）, 20261023-end
+    // prize add by yanliang for AI 解释：看解释 / 去解释 / 关联文件跳转, 20261024-start
+    if (e.target.closest('#explainBtn')) {
+      e.preventDefault();
+      const rel = state.browseSel;
+      if (!rel) return;
+      const kind = explainKindOf(rel);
+      if (kind === 'ready' || kind === 'stale') {
+        state.explainMode = !state.explainMode;
+        renderBrowseFile();
+      } else if (kind !== 'pending') {
+        requestExplain(rel);
+      }
+      return;
+    }
+    if (e.target.closest('[data-explain-file]')) {
+      e.preventDefault();
+      jumpToBrowseFile(e.target.closest('[data-explain-file]').dataset.explainFile);
+      return;
+    }
+    // prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-start
+    if (e.target.closest('[data-reveal]')) {
+      e.preventDefault();
+      revealPath(e.target.closest('[data-reveal]').dataset.reveal);
+      return;
+    }
+    // prize add by yanliang for 解释文档顶部显示绝对路径，并可一键在文件夹中定位, 20261024-end
+    // prize add by yanliang for AI 解释：看解释 / 去解释 / 关联文件跳转, 20261024-end
     if (e.target.closest('[data-open-commit]')) {
       e.preventDefault();
       openCommitPanel();
