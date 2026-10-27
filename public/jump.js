@@ -307,6 +307,9 @@
     }
 
     if (!(ev.ctrlKey || ev.metaKey)) return;
+    // Ctrl+Alt+点击 是「查找引用」，交给 refs.js；这里必须让路，
+    // 否则会同时触发正向跳转，跳到定义后面板又被当成「换了文件」关掉
+    if (ev.altKey) return;
     const code = ev.target.closest && ev.target.closest('.fv-code');
     if (!code) return;
     const sym = symbolAtPoint(ev.clientX, ev.clientY);
@@ -351,7 +354,7 @@
     syncBackBtn();
   })();
 
-  // 给别的模块留几个入口（mode=source 的提示条、自测脚本要用）
-  window.gdvJump = { openAt, goBack, history, symbolAtPoint, syncBackBtn };
+  // 给别的模块留几个入口（mode=source 的提示条、查找引用、自测脚本要用）
+  window.gdvJump = { openAt, goBack, history, symbolAtPoint, syncBackBtn, remember, jumpTo };
 })();
 // prize add by yanliang 20261026-end

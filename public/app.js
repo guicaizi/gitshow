@@ -78,6 +78,10 @@ const state = {
   skip: 0,
   hasMore: false,
   loadingCommits: false,
+  // prize add by yanliang for 提交列表过滤：查询词与筛出的条数, 20261027-start
+  search: '',
+  shownCount: 0,
+  // prize add by yanliang for 提交列表过滤：查询词与筛出的条数, 20261027-end
   active: null,        // 当前打开的条目
   detail: null,
   view: localStorage.getItem('gdv.view') || 'split',
@@ -2771,6 +2775,55 @@ function commitItemHtml(c, idx) {
   </li>`;
 }
 
+// prize add by yanliang for 提交列表过滤：查询词记在 state 里，每次重绘后自动重新生效, 20261027-start
+// 原来只对整个 .commit-item 改 display，列表一重绘（点提交、勾比对、滚动加载）就丢了过滤，
+// 现在把查询词存进 state.search，重绘完立刻按它重新筛一遍。
+function commitMatchText(c) {
+  if (!c) return '';
+  return [c.subject, c.author, c.email, c.short, c.hash, (c.refs || []).join(' ')]
+    .join(' ')
+    .toLowerCase();
+}
+
+function applyCommitFilter() {
+  const q = (state.search || '').toLowerCase();
+  let shown = 0;
+  document.querySelectorAll('#commitList .commit-item').forEach((item) => {
+    let ok;
+    if (!q) ok = true;
+    // 工作区改动没有作者，过滤时先收起来，免得混在某个作者的结果里
+    else if (item.dataset.worktree) ok = false;
+    else ok = commitMatchText(state.commits[Number(item.dataset.idx)]).includes(q);
+    item.style.display = ok ? '' : 'none';
+    if (ok) shown += 1;
+  });
+  state.shownCount = shown;
+  return shown;
+}
+
+function updateListFoot() {
+  const foot = $('#listFoot');
+  if (!foot) return;
+  if (state.loadingCommits) {
+    foot.textContent = '加载中…';
+    return;
+  }
+  if (state.search) {
+    // 过滤状态下说清「筛出几条 / 一共加载了几条」，剩下的还可以点或滚着继续加载
+    const more = state.hasMore ? ' · 点这里或在列表里滚动继续加载' : '';
+    foot.textContent = `匹配 ${state.shownCount || 0} / 已加载 ${state.commits.length}${more}`;
+    foot.classList.toggle('can-more', !!state.hasMore);
+    return;
+  }
+  foot.classList.remove('can-more');
+  foot.textContent = state.hasMore
+    ? '滚动加载更多'
+    : state.commits.length
+      ? `共 ${state.commits.length} 个提交`
+      : '';
+}
+// prize add by yanliang for 提交列表过滤：查询词记在 state 里，每次重绘后自动重新生效, 20261027-end
+
 function renderCommitList() {
   const list = $('#commitList');
   const worktreeItem = `<li class="commit-item worktree${
@@ -2782,13 +2835,10 @@ function renderCommitList() {
 
   const hasWorktree = state.info && state.info.dirtyCount > 0;
   list.innerHTML = (hasWorktree ? worktreeItem : '') + state.commits.map((c, i) => commitItemHtml(c, i)).join('');
-  $('#listFoot').textContent = state.loadingCommits
-    ? '加载中…'
-    : state.commits.length
-      ? state.hasMore
-        ? '滚动加载更多'
-        : `共 ${state.commits.length} 个提交`
-      : '';
+  // prize add by yanliang for 提交列表过滤：重绘后立刻恢复过滤, 20261027-start
+  applyCommitFilter();
+  updateListFoot();
+  // prize add by yanliang for 提交列表过滤：重绘后立刻恢复过滤, 20261027-end
 }
 
 /* ---------------- 仓库信息 ---------------- */
@@ -2847,9 +2897,23 @@ async function loadCommits(reset) {
     $('#listFoot').textContent = '加载失败';
   } finally {
     state.loadingCommits = false;
-    $('#listFoot').textContent = state.hasMore ? '滚动加载更多' : `共 ${state.commits.length} 个提交`;
+    // prize add by yanliang for 加载结束后底部提示按过滤状态重算, 20261027-start
+    updateListFoot();
+    // prize add by yanliang for 加载结束后底部提示按过滤状态重算, 20261027-end
   }
 }
+
+// prize add by yanliang for 过滤词也写进地址栏，刷新 / 换分支后还能保持同一个作者, 20261027-start
+function syncSearchUrl(q) {
+  try {
+    const url = new URL(location.href);
+    if (q) url.searchParams.set('q', q);
+    else url.searchParams.delete('q');
+    const search = url.searchParams.toString().replace(/%2F/g, '/');
+    history.replaceState(null, '', url.pathname + (search ? '?' + search : '') + url.hash);
+  } catch (e) {}
+}
+// prize add by yanliang for 过滤词也写进地址栏，刷新 / 换分支后还能保持同一个作者, 20261027-end
 
 // prize add by yanliang for 换仓库后同步地址栏，避免刷新时 URL 参数把刚选的仓库覆盖回去, 20261023-start
 function syncRepoUrl(repo) {
@@ -3591,11 +3655,12 @@ function bindEvents() {
   });
 
   $('#search').addEventListener('input', (e) => {
-    const q = e.target.value.trim().toLowerCase();
-    document.querySelectorAll('.commit-item').forEach((item) => {
-      const text = item.textContent.toLowerCase();
-      item.style.display = !q || text.includes(q) ? '' : 'none';
-    });
+    // prize add by yanliang for 过滤词存进 state，列表重绘后不再被清空, 20261027-start
+    state.search = e.target.value.trim().toLowerCase();
+    applyCommitFilter();
+    updateListFoot();
+    syncSearchUrl(state.search);
+    // prize add by yanliang for 过滤词存进 state，列表重绘后不再被清空, 20261027-end
   });
 
   $('#themeToggle').addEventListener('click', () => {
@@ -3631,6 +3696,12 @@ function bindEvents() {
       loadCommits(false);
     }
   });
+
+  // prize add by yanliang for 过滤后可能一条都不剩、列表滚不动，底部那行也能点着继续加载, 20261027-start
+  $('#listFoot').addEventListener('click', () => {
+    if (state.hasMore && !state.loadingCommits) loadCommits(false);
+  });
+  // prize add by yanliang for 过滤后可能一条都不剩、列表滚不动，底部那行也能点着继续加载, 20261027-end
 
   $('#runCompare').addEventListener('click', () => {
     if (state.compare.length === 2) openComparison(state.compare[0], state.compare[1]);
@@ -4140,6 +4211,14 @@ async function init() {
   bindEvents();
   state.filter = '';
   renderCompareBar();
+
+  // prize add by yanliang for 地址栏带 q 时回填到搜索框，刷新后保持同一个作者, 20261027-start
+  const initQ = params.get('q');
+  if (initQ) {
+    state.search = initQ.trim().toLowerCase();
+    $('#search').value = initQ;
+  }
+  // prize add by yanliang for 地址栏带 q 时回填到搜索框，刷新后保持同一个作者, 20261027-end
 
   // prize add by yanliang for 部署在 Linux 服务器时把路径提示换成服务器路径样式, 20261022-start
   try {

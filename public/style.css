@@ -570,6 +570,16 @@ body.col-resizing {
   min-height: 8px;
 }
 
+/* prize add by yanliang for 过滤时底部提示可点着继续加载, 20261027-start */
+.list-foot.can-more {
+  cursor: pointer;
+  color: var(--accent);
+}
+.list-foot.can-more:hover {
+  background: var(--bg-hover);
+}
+/* prize add by yanliang for 过滤时底部提示可点着继续加载, 20261027-end */
+
 /* ---------- 详情 ---------- */
 .detail {
   flex: 1;
@@ -2713,3 +2723,312 @@ body.mode-source .repo-open { flex: 1; max-width: 820px; }
   border-color: var(--accent);
 }
 /* prize add by yanliang for 问 AI：自动复制失败时的手动复制浮层, 20261026-end */
+
+/* prize add by yanliang for 查找引用：右键菜单 + 结果面板, 20261027-start */
+.refs-menu {
+  position: fixed;
+  z-index: 32;
+  min-width: 208px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.refs-menu-sym {
+  margin-bottom: 4px;
+  padding: 5px 8px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 27px;
+  padding: 0 8px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.refs-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+/* 固定宽度让三行操作名左对齐，快捷键靠右不被文本长度带偏 */
+.refs-menu-key {
+  flex: none;
+  width: 82px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-3);
+}
+
+.refs-panel {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  width: 486px;
+  max-width: calc(100vw - 40px);
+  max-height: 62vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.refs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.refs-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.refs-title b {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-title em {
+  flex: none;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-style: normal;
+  color: var(--text-3);
+}
+
+.refs-x {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.refs-x:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.refs-tabs {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 7px 10px;
+  background: var(--bg-sub);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.refs-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.refs-tab:hover {
+  color: var(--text);
+}
+
+.refs-tab.on {
+  color: var(--text);
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.refs-num {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.refs-scope-name {
+  flex: 1;
+  min-width: 0;
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 6px;
+  overflow: auto;
+}
+
+/* kind 竖排在左、路径与代码叠在右，一屏能多塞几倍条目 */
+.refs-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  row-gap: 1px;
+  width: 100%;
+  padding: 5px 12px 6px;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.refs-item:hover {
+  background: var(--bg-hover);
+}
+
+.refs-kind {
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 1px;
+  padding: 1px 5px;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+  background: var(--bg-hover);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.refs-kind.import {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.refs-kind.same-package {
+  color: var(--add-text);
+  background: var(--add-bg);
+}
+
+.refs-kind.comment {
+  color: var(--text-3);
+  background: transparent;
+}
+
+.refs-loc {
+  grid-column: 2;
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.refs-path {
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* 路径太长时保留尾部（文件名更有信息量） */
+  text-align: left;
+}
+
+.refs-ln {
+  flex: none;
+  color: var(--text-3);
+}
+
+.refs-code {
+  grid-column: 2;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-empty {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 24px 16px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-3);
+}
+
+.refs-more {
+  padding: 9px 12px 4px;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.refs-spin {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: refs-spin .7s linear infinite;
+}
+
+.refs-spin.big {
+  width: 13px;
+  height: 13px;
+  border-width: 2px;
+}
+
+@keyframes refs-spin {
+  to { transform: rotate(360deg); }
+}
+/* prize add by yanliang for 查找引用：右键菜单 + 结果面板, 20261027-end */
