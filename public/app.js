@@ -1040,6 +1040,56 @@ async function renderMdPreview(path) {
 }
 // prize add by yanliang for markdown 在线预览：轻量渲染器（零依赖，先转义再套语法）, 20261023-end
 
+// prize add by yanliang for 超大提交：整份补丁读不出来时用 numstat 的清单顶上，点文件再单读, 20261028-start
+// 根提交（仓库第一次导入）动辄上万个文件、上百 MB 补丁，服务端会读爆缓冲，
+// 这里只拿「路径 + 增删行数」先把左栏树撑起来，右侧选中哪个文件才去读那个文件的 diff。
+function lazyFilesFromNumstat(d) {
+  const root = !(d.parents || []).length;
+  return (d.files || []).map((x) => ({
+    oldPath: x.path,
+    newPath: x.path,
+    path: x.path,
+    // 根提交里的文件都是新增；其它情况没有状态信息，按修改处理
+    status: root ? 'A' : 'M',
+    binary: !!x.binary,
+    hunks: [],
+    additions: x.additions,
+    deletions: x.deletions,
+    header: '',
+    mode: langProfile(x.path),
+    lazy: !x.binary,
+  }));
+}
+
+async function ensureFilePatch(f) {
+  const d = state.detail;
+  if (!f || !f.lazy || f.patchLoading || !d || d.kind !== 'commit') return;
+  f.patchLoading = true;
+  try {
+    const res = await api('file-diff', {
+      hash: d.hash,
+      path: f.path,
+      ignoreSpace: state.ignoreSpace ? '1' : '0',
+    });
+    const one = parsePatch(res.patch || '')[0];
+    if (one) {
+      f.hunks = one.hunks;
+      f.status = one.status || f.status;
+      f.binary = one.binary;
+      f.additions = one.additions;
+      f.deletions = one.deletions;
+    }
+    f.lazy = false;
+  } catch (err) {
+    f.lazy = false;
+    f.loadError = err.message || '读取失败';
+  } finally {
+    f.patchLoading = false;
+    if (state.selected === f.path) renderSelectedFile();
+  }
+}
+// prize add by yanliang for 超大提交：整份补丁读不出来时用 numstat 的清单顶上，点文件再单读, 20261028-end
+
 function renderSelectedFile() {
   const pane = $('#diffPane');
   if (!pane) return;
@@ -1053,7 +1103,17 @@ function renderSelectedFile() {
   // prize add by yanliang for markdown 文件可切换渲染预览, 20261023-start
   const md = isMarkdown(f.path);
   const mdMode = md && state.mdPreview;
-  const body = mdMode ? '<div class="md-loading">加载文档…</div>' : diffBodyHtml(f);
+  // prize add by yanliang for 超大提交里未加载的文件先显示占位，等它的补丁回来再重绘, 20261028-start
+  const pending = !!f.lazy && !f.hunks.length;
+  const body = mdMode
+    ? '<div class="md-loading">加载文档…</div>'
+    : pending
+      ? '<div class="skeleton">正在读取这个文件的改动…</div>'
+      : f.loadError
+        ? `<div class="skeleton">读取这个文件的改动失败：${esc(f.loadError)}</div>`
+        : diffBodyHtml(f);
+  if (pending) ensureFilePatch(f);
+  // prize add by yanliang for 超大提交里未加载的文件先显示占位，等它的补丁回来再重绘, 20261028-end
   const mdBtn = md
     ? `<button class="btn tiny md-toggle${mdMode ? ' on' : ''}" id="mdToggle" title="${
         mdMode ? '显示这个文件的逐行改动' : '把文档渲染成排版后的样子'
@@ -2519,7 +2579,9 @@ function renderDiff() {
   }
   // prize add by yanliang for 换了版本才清文件树缓存，同一版本内刷新保持展开状态, 20261023-end
 
-  const files = parsePatch(d.patch || '');
+  // prize add by yanliang for 超大补丁失败时改用 numstat 清单，避免误报「没有文件改动」, 20261028-start
+  const files = d.patchError ? lazyFilesFromNumstat(d) : parsePatch(d.patch || '');
+  // prize add by yanliang for 超大补丁失败时改用 numstat 清单，避免误报「没有文件改动」, 20261028-end
   const live = d.kind === 'working';
   const statusMap = d.status || {};
 
@@ -2623,6 +2685,7 @@ function renderToolbar() {
         : ''
       // prize add by yanliang for 工作区视图提供整棵树的一键暂存/取消暂存, 20261022-end
     }
+    ${state.detail && state.detail.patchError ? `<span class="fact tag-warn" title="整份补丁超过服务端读取上限，点开文件才会读取它的改动">补丁过大 · 按文件加载</span>` : ''}
     <span class="fact">${count} 个文件 <span class="stat-add">+${add}</span> <span class="stat-del">-${del}</span></span>
   `;
 }
@@ -2842,6 +2905,49 @@ function renderCommitList() {
 }
 
 /* ---------------- 仓库信息 ---------------- */
+// prize add by yanliang for 标题跟着项目名走：顶栏品牌 + 浏览器标签页都换掉, 20261027-start
+// 多开几个标签页时全是「Git 提交比对」分不清，现在打开仓库后显示仓库名，没打开就退回原名。
+function syncTitle() {
+  const name = state.info && state.info.name ? state.info.name : '';
+  const brand = $('#brandName');
+  if (brand) {
+    brand.textContent = name || 'Git 提交比对';
+    // 名字长的时候靠 CSS 省略号截断，完整名字放到 title 里
+    brand.title = name ? `${name}\n${state.info.repo}` : 'Git 提交比对';
+  }
+  if (state.sourceMode) document.title = name ? `${name} · 源码浏览` : '源码浏览';
+  else document.title = name ? `${name} · Git 提交比对` : 'Git 提交比对';
+}
+// prize add by yanliang for 标题跟着项目名走：顶栏品牌 + 浏览器标签页都换掉, 20261027-end
+
+// prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-start
+function syncRepoTools() {
+  // 这两个入口只对本机有意义：服务跑在别人机器上时，藏掉比点了报错好
+  const local = ['', '127.0.0.1', 'localhost', '::1', '[::1]'].includes(location.hostname);
+  const group = document.querySelector('.repo-tools');
+  if (group) group.style.display = local ? '' : 'none';
+  if (!local) return;
+
+  const has = !!(state.info && state.repo);
+  ['#openDir', '#openShell'].forEach((id) => {
+    const btn = $(id);
+    if (btn) btn.disabled = !has;
+  });
+}
+
+async function openLocal(action) {
+  if (!state.repo) return;
+  try {
+    const data = await postApi(action, {});
+    toast((action === 'open-dir' ? '已打开目录：' : '已打开命令行：') + data.dir);
+  } catch (err) {
+    // 服务端进程还没重启时，旧代码里没有这两个路由，返回的就是「未知接口」
+    const msg = /未知接口/.test(err.message) ? '服务需要重启一次（新版接口还没加载）' : err.message;
+    toast((action === 'open-dir' ? '打开目录失败：' : '打开命令行失败：') + msg, true);
+  }
+}
+// prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-end
+
 function renderRepoCard() {
   const info = state.info;
   const card = $('#repoCard');
@@ -2949,6 +3055,12 @@ async function openRepo(path, opts) {
     state.repo = info.repo;
     state.info = info;
     localStorage.setItem('gdv.repo', state.repo);
+    // prize add by yanliang for 打开仓库后顶栏标题与标签页换成项目名, 20261027-start
+    syncTitle();
+    // prize add by yanliang for 打开仓库后顶栏标题与标签页换成项目名, 20261027-end
+    // prize add by yanliang for 打开仓库后才允许「打开目录 / 打开命令行」, 20261028-start
+    syncRepoTools();
+    // prize add by yanliang for 打开仓库后才允许「打开目录 / 打开命令行」, 20261028-end
     // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-start
     if (syncUrl) syncRepoUrl(state.repo);
     // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-end
@@ -2994,6 +3106,14 @@ async function openRepo(path, opts) {
     state.repo = prevRepo;
     // 之前已经打开过仓库时保留原视图，只提示错误；首次打开失败则回空态
     if (!state.info) renderRepoCard();
+    // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-start
+    syncTitle();
+    // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-start
+    syncTitle();
+    // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-end
+    // prize add by yanliang for 打开失败退回上一个仓库时，本地入口跟着那个仓库走, 20261028-start
+    syncRepoTools();
+    // prize add by yanliang for 打开失败退回上一个仓库时，本地入口跟着那个仓库走, 20261028-end
     toast(err.message, true);
     return false;
   }
@@ -3153,6 +3273,13 @@ async function openCommit(hash) {
 
     const detail = await api('commit', { hash, ignoreSpace: state.ignoreSpace ? '1' : '0' });
     state.detail = detail;
+    // prize add by yanliang for 补丁过大时明确说一句，免得以为提交是空的, 20261028-start
+    if (detail.patchError === 'too-large') {
+      toast('这次提交的补丁太大，改成按文件加载：点开文件才读取它的改动');
+    } else if (detail.patchError) {
+      toast('整份补丁读取失败，改成按文件加载', true);
+    }
+    // prize add by yanliang for 补丁过大时明确说一句，免得以为提交是空的, 20261028-end
     state.active = { hash: detail.hash, kind: 'commit' };
     state.selected = '';
     // prize add by yanliang for 切换提交时重置目录折叠状态, 20261022-start
@@ -3662,6 +3789,11 @@ function bindEvents() {
     syncSearchUrl(state.search);
     // prize add by yanliang for 过滤词存进 state，列表重绘后不再被清空, 20261027-end
   });
+
+  // prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-start
+  $('#openDir').addEventListener('click', () => openLocal('open-dir'));
+  $('#openShell').addEventListener('click', () => openLocal('open-shell'));
+  // prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-end
 
   $('#themeToggle').addEventListener('click', () => {
     state.theme = state.theme === 'light' ? 'dark' : 'light';
@@ -4196,7 +4328,9 @@ async function init() {
     // 直接盖掉 localStorage 里的选择：这个模式下「改动」一概不显示
     state.browse = 'files';
     document.body.classList.add('mode-source');
-    document.title = '源码浏览';
+    // prize add by yanliang for 源码模式的标题也走统一入口，打开仓库后会带上项目名, 20261027-start
+    syncTitle();
+    // prize add by yanliang for 源码模式的标题也走统一入口，打开仓库后会带上项目名, 20261027-end
   }
   // prize add by yanliang for 纯源码模式：?mode=source 只保留文件树 + 代码 + 跳转, 20261026-end
 
@@ -4209,6 +4343,9 @@ async function init() {
   // prize add by yanliang for 恢复左侧文件栏宽度, 20261022-end
 
   bindEvents();
+  // prize add by yanliang for 启动时先按「是否本机访问」决定两个本地入口露不露, 20261028-start
+  syncRepoTools();
+  // prize add by yanliang for 启动时先按「是否本机访问」决定两个本地入口露不露, 20261028-end
   state.filter = '';
   renderCompareBar();
 

@@ -96,6 +96,14 @@ body {
 
 .brand svg { color: var(--accent); }
 
+/* prize add by yanliang for 顶栏标题显示项目名，过长时省略, 20261027-start */
+#brandName {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* prize add by yanliang for 顶栏标题显示项目名，过长时省略, 20261027-end */
+
 .repo-open {
   display: flex;
   align-items: center;
@@ -154,6 +162,22 @@ body {
 .repo-pick:hover { color: var(--accent); background: var(--accent-soft); }
 .repo-pick:active { transform: translateY(-50%) scale(.94); }
 /* prize add by yanliang for 路径框内嵌目录选择按钮, 20261023-end */
+
+/* prize add by yanliang for 顶栏两个本地入口（打开目录 / 打开命令行）, 20261028-start */
+.repo-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.repo-tools .btn.icon:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.repo-tools .btn.icon:not(:disabled):hover { color: var(--accent); }
+/* prize add by yanliang for 顶栏两个本地入口（打开目录 / 打开命令行）, 20261028-end */
 
 .top-tools {
   display: flex;
@@ -671,6 +695,16 @@ body.col-resizing {
 
 .stat-add { color: var(--add-text); font-weight: 600; font-family: var(--mono); }
 .stat-del { color: var(--del-text); font-weight: 600; font-family: var(--mono); }
+
+/* prize add by yanliang for 补丁过大时工具条上的提示标签, 20261028-start */
+.fact.tag-warn {
+  color: var(--del-text);
+  background: var(--del-bg);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11.5px;
+}
+/* prize add by yanliang for 补丁过大时工具条上的提示标签, 20261028-end */
 
 .mini-bars {
   display: inline-flex;

@@ -259,8 +259,20 @@ async function readCommitDetail(repo, hash, ignoreSpace) {
       ? ['diff', `${hash}^1`, hash, '--patch', '--no-color', '--no-ext-diff', '--unified=3', ...extra]
       : diffArgs;
 
-  const [patch, numstatRaw] = await Promise.all([
-    git(patchArgs, repo).catch((e) => `diff 读取失败：${e.message}`),
+  // prize add by yanliang for 超大补丁（根提交一次导入上万个文件）不再整份读进内存, 20261028-start
+  // 根提交 7027 个文件的 patch 有 114MB，超过 maxBuffer（64MB）会直接失败，前端拿到空补丁
+  // 就显示「没有文件改动」。这里把失败原因结构化返回，前端改成「文件清单 + 按需读单文件」。
+  const [patchRes, numstatRaw] = await Promise.all([
+    git(patchArgs, repo)
+      .then((text) => ({ patch: text, error: '' }))
+      .catch((e) => {
+        const msg = (e && e.message) || '';
+        return {
+          patch: '',
+          error: /maxBuffer/i.test(msg) ? 'too-large' : 'failed',
+          detail: msg,
+        };
+      }),
     git(
       (parents.length > 1
         ? ['diff', '--numstat', `${hash}^1`, hash]
@@ -269,6 +281,7 @@ async function readCommitDetail(repo, hash, ignoreSpace) {
       repo
     ).catch(() => ''),
   ]);
+  // prize add by yanliang for 超大补丁（根提交一次导入上万个文件）不再整份读进内存, 20261028-end
   // prize add by yanliang for 让忽略空白开关同时作用于 patch 与 numstat，避免统计数字与显示不一致, 20261022-end
 
   return {
@@ -288,11 +301,32 @@ async function readCommitDetail(repo, hash, ignoreSpace) {
       .filter(Boolean),
     message: (f[10] || '').replace(/\s+$/, ''),
     files: parseNumstat(numstatRaw),
-    patch,
+    patch: patchRes.patch,
+    // prize add by yanliang for 补丁读取失败时告诉前端（too-large / failed），前端据此走按需加载, 20261028-start
+    patchError: patchRes.error,
+    patchErrorDetail: patchRes.detail || '',
+    // prize add by yanliang for 补丁读取失败时告诉前端（too-large / failed），前端据此走按需加载, 20261028-end
     isMerge: parents.length > 1,
   };
 }
 // prize add by yanliang for 读取单个提交详情, 20261022-end
+
+// prize add by yanliang for 单文件补丁：整份 diff 太大时，点开哪个文件才读哪个, 20261028-start
+async function readFileDiff(repo, hash, rawPath, ignoreSpace) {
+  const rel = safeRelPath(rawPath);
+  const hashRev = safeRev(hash);
+  if (!hashRev) throw new Error('缺少提交号');
+  const parentsRaw = await git(['show', '-s', '--pretty=format:%P', hashRev], repo);
+  const parents = parentsRaw.split(' ').filter(Boolean);
+  const extra = ignoreSpace ? ['--ignore-all-space'] : [];
+  const common = ['--patch', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=3', ...extra, '--', rel];
+  // 根提交没有父提交，用 show 自己算全量新增；其它提交与第一个父提交比（合并提交同理）
+  const args = parents.length
+    ? ['diff', parents[0], hashRev, ...common]
+    : ['show', hashRev, '--format=', ...common];
+  return { patch: await git(args, repo), path: rel };
+}
+// prize add by yanliang for 单文件补丁：整份 diff 太大时，点开哪个文件才读哪个, 20261028-end
 
 // prize add by yanliang for 读取两个提交之间的比对, 20261022-start
 async function readComparison(repo, base, head, ignoreSpace) {
@@ -1319,6 +1353,68 @@ async function revealInFileManager(repo, rawPath) {
 }
 // prize add by yanliang for 在系统文件管理器里定位文件，供解释文档顶部的「打开位置」使用, 20261024-end
 
+// prize add by yanliang for 顶栏两个本地动作：打开仓库目录 / 在仓库目录开命令行, 20261028-start
+async function requireRepoDir(repo) {
+  const dir = path.resolve(repo);
+  const stat = await fs.promises.stat(dir).catch(() => null);
+  if (!stat || !stat.isDirectory()) throw new Error(`仓库目录不存在：${dir}`);
+  return dir;
+}
+
+async function openDirInFileManager(repo) {
+  const dir = await requireRepoDir(repo);
+  const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  return new Promise((resolve, reject) => {
+    execFile(cmd, [dir], (err) => {
+      // explorer.exe 成功也常返回非 0，只有命令根本起不来才算失败
+      if (err && err.code === 'ENOENT') return reject(new Error(`系统里没有可用的文件管理器命令：${cmd}`));
+      resolve({ ok: true, dir });
+    });
+  });
+}
+
+async function openShellAt(repo) {
+  const dir = await requireRepoDir(repo);
+
+  if (process.platform === 'win32') {
+    // 必须借 cmd 的 start：只有它能给控制台程序开新窗口。
+    // 直接 spawn('cmd.exe', {detached:true}) 在服务本身没有控制台时会把 stdin 变成 EOF，窗口一闪就没。
+    return new Promise((resolve, reject) => {
+      execFile('cmd.exe', ['/c', 'start', '', 'cmd.exe', '/K', 'cd', '/d', dir], { cwd: dir }, (err) => {
+        if (err && err.code === 'ENOENT') return reject(new Error('系统里没有找到 cmd.exe'));
+        resolve({ ok: true, dir, bin: 'cmd.exe' });
+      });
+    });
+  }
+
+  // 工作目录靠 cwd 带进新窗口，不再拼 cd 命令——路径里有空格、中文、& 都不会碎
+  const candidates =
+    process.platform === 'darwin'
+      ? [['open', ['-a', 'Terminal', dir]]]
+      : [
+          ['x-terminal-emulator', []],
+          ['gnome-terminal', []],
+          ['konsole', []],
+          ['xfce4-terminal', []],
+        ];
+
+  for (const [bin, args] of candidates) {
+    try {
+      const child = spawn(bin, args, { cwd: dir, detached: true, stdio: 'ignore' });
+      await new Promise((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
+      child.unref();
+      return { ok: true, dir, bin };
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+  throw new Error('系统里没有找到可用的终端程序');
+}
+// prize add by yanliang for 顶栏两个本地动作：打开仓库目录 / 在仓库目录开命令行, 20261028-end
+
 // prize add by yanliang for HTTP 路由与静态资源托管, 20261022-start
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -1530,6 +1626,15 @@ async function handleApi(req, res, urlObj) {
       // prize add by yanliang for 同一个 /api/commit 按方法区分：POST 提交，GET 读详情, 20261022-end
       return sendJson(res, 200, await readCommitDetail(repo, q.get('hash'), ignoreSpace));
     }
+    // prize add by yanliang for 整份补丁太大时按文件取 diff, 20261028-start
+    if (action === 'file-diff') {
+      return sendJson(
+        res,
+        200,
+        await readFileDiff(repo, q.get('hash'), q.get('path'), ignoreSpace)
+      );
+    }
+    // prize add by yanliang for 整份补丁太大时按文件取 diff, 20261028-end
     // prize add by yanliang for 提交面板读取暂存区, 20261022-start
     if (action === 'staged') {
       return sendJson(res, 200, await readStaged(repo));
@@ -1634,6 +1739,15 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, await revealInFileManager(repo, String(body.path || '')));
     }
     // prize add by yanliang for 在文件夹中显示当前文件（解释文档顶部的绝对路径点击）, 20261024-end
+
+    // prize add by yanliang for 顶栏「打开目录 / 打开命令行」两个本地动作, 20261028-start
+    if (action === 'open-dir' || action === 'open-shell') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      if (!isLoopbackRequest(req)) throw new Error('只有在运行服务的本机上才能打开本地窗口');
+      const result = action === 'open-dir' ? await openDirInFileManager(repo) : await openShellAt(repo);
+      return sendJson(res, 200, result);
+    }
+    // prize add by yanliang for 顶栏「打开目录 / 打开命令行」两个本地动作, 20261028-end
 
     return sendJson(res, 404, { error: '未知接口' });
   } catch (err) {
