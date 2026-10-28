@@ -163,6 +163,22 @@ body {
 .repo-pick:active { transform: translateY(-50%) scale(.94); }
 /* prize add by yanliang for 路径框内嵌目录选择按钮, 20261023-end */
 
+/* prize add by yanliang for 顶栏两个本地入口（打开目录 / 打开命令行）, 20261028-start */
+.repo-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.repo-tools .btn.icon:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.repo-tools .btn.icon:not(:disabled):hover { color: var(--accent); }
+/* prize add by yanliang for 顶栏两个本地入口（打开目录 / 打开命令行）, 20261028-end */
+
 .top-tools {
   display: flex;
   align-items: center;

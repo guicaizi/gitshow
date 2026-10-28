@@ -2920,6 +2920,34 @@ function syncTitle() {
 }
 // prize add by yanliang for 标题跟着项目名走：顶栏品牌 + 浏览器标签页都换掉, 20261027-end
 
+// prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-start
+function syncRepoTools() {
+  // 这两个入口只对本机有意义：服务跑在别人机器上时，藏掉比点了报错好
+  const local = ['', '127.0.0.1', 'localhost', '::1', '[::1]'].includes(location.hostname);
+  const group = document.querySelector('.repo-tools');
+  if (group) group.style.display = local ? '' : 'none';
+  if (!local) return;
+
+  const has = !!(state.info && state.repo);
+  ['#openDir', '#openShell'].forEach((id) => {
+    const btn = $(id);
+    if (btn) btn.disabled = !has;
+  });
+}
+
+async function openLocal(action) {
+  if (!state.repo) return;
+  try {
+    const data = await postApi(action, {});
+    toast((action === 'open-dir' ? '已打开目录：' : '已打开命令行：') + data.dir);
+  } catch (err) {
+    // 服务端进程还没重启时，旧代码里没有这两个路由，返回的就是「未知接口」
+    const msg = /未知接口/.test(err.message) ? '服务需要重启一次（新版接口还没加载）' : err.message;
+    toast((action === 'open-dir' ? '打开目录失败：' : '打开命令行失败：') + msg, true);
+  }
+}
+// prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-end
+
 function renderRepoCard() {
   const info = state.info;
   const card = $('#repoCard');
@@ -3030,6 +3058,9 @@ async function openRepo(path, opts) {
     // prize add by yanliang for 打开仓库后顶栏标题与标签页换成项目名, 20261027-start
     syncTitle();
     // prize add by yanliang for 打开仓库后顶栏标题与标签页换成项目名, 20261027-end
+    // prize add by yanliang for 打开仓库后才允许「打开目录 / 打开命令行」, 20261028-start
+    syncRepoTools();
+    // prize add by yanliang for 打开仓库后才允许「打开目录 / 打开命令行」, 20261028-end
     // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-start
     if (syncUrl) syncRepoUrl(state.repo);
     // prize add by yanliang for 地址栏跟着选中的仓库走，刷新后不会再回到旧仓库, 20261023-end
@@ -3077,7 +3108,12 @@ async function openRepo(path, opts) {
     if (!state.info) renderRepoCard();
     // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-start
     syncTitle();
+    // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-start
+    syncTitle();
     // prize add by yanliang for 打开失败时标题退回上一个仓库（或默认名）, 20261027-end
+    // prize add by yanliang for 打开失败退回上一个仓库时，本地入口跟着那个仓库走, 20261028-start
+    syncRepoTools();
+    // prize add by yanliang for 打开失败退回上一个仓库时，本地入口跟着那个仓库走, 20261028-end
     toast(err.message, true);
     return false;
   }
@@ -3754,6 +3790,11 @@ function bindEvents() {
     // prize add by yanliang for 过滤词存进 state，列表重绘后不再被清空, 20261027-end
   });
 
+  // prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-start
+  $('#openDir').addEventListener('click', () => openLocal('open-dir'));
+  $('#openShell').addEventListener('click', () => openLocal('open-shell'));
+  // prize add by yanliang for 顶栏两个本地入口：打开仓库目录 / 在仓库目录开命令行, 20261028-end
+
   $('#themeToggle').addEventListener('click', () => {
     state.theme = state.theme === 'light' ? 'dark' : 'light';
     localStorage.setItem('gdv.theme', state.theme);
@@ -4302,6 +4343,9 @@ async function init() {
   // prize add by yanliang for 恢复左侧文件栏宽度, 20261022-end
 
   bindEvents();
+  // prize add by yanliang for 启动时先按「是否本机访问」决定两个本地入口露不露, 20261028-start
+  syncRepoTools();
+  // prize add by yanliang for 启动时先按「是否本机访问」决定两个本地入口露不露, 20261028-end
   state.filter = '';
   renderCompareBar();
 

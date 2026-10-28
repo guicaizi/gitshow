@@ -1353,6 +1353,68 @@ async function revealInFileManager(repo, rawPath) {
 }
 // prize add by yanliang for 在系统文件管理器里定位文件，供解释文档顶部的「打开位置」使用, 20261024-end
 
+// prize add by yanliang for 顶栏两个本地动作：打开仓库目录 / 在仓库目录开命令行, 20261028-start
+async function requireRepoDir(repo) {
+  const dir = path.resolve(repo);
+  const stat = await fs.promises.stat(dir).catch(() => null);
+  if (!stat || !stat.isDirectory()) throw new Error(`仓库目录不存在：${dir}`);
+  return dir;
+}
+
+async function openDirInFileManager(repo) {
+  const dir = await requireRepoDir(repo);
+  const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  return new Promise((resolve, reject) => {
+    execFile(cmd, [dir], (err) => {
+      // explorer.exe 成功也常返回非 0，只有命令根本起不来才算失败
+      if (err && err.code === 'ENOENT') return reject(new Error(`系统里没有可用的文件管理器命令：${cmd}`));
+      resolve({ ok: true, dir });
+    });
+  });
+}
+
+async function openShellAt(repo) {
+  const dir = await requireRepoDir(repo);
+
+  if (process.platform === 'win32') {
+    // 必须借 cmd 的 start：只有它能给控制台程序开新窗口。
+    // 直接 spawn('cmd.exe', {detached:true}) 在服务本身没有控制台时会把 stdin 变成 EOF，窗口一闪就没。
+    return new Promise((resolve, reject) => {
+      execFile('cmd.exe', ['/c', 'start', '', 'cmd.exe', '/K', 'cd', '/d', dir], { cwd: dir }, (err) => {
+        if (err && err.code === 'ENOENT') return reject(new Error('系统里没有找到 cmd.exe'));
+        resolve({ ok: true, dir, bin: 'cmd.exe' });
+      });
+    });
+  }
+
+  // 工作目录靠 cwd 带进新窗口，不再拼 cd 命令——路径里有空格、中文、& 都不会碎
+  const candidates =
+    process.platform === 'darwin'
+      ? [['open', ['-a', 'Terminal', dir]]]
+      : [
+          ['x-terminal-emulator', []],
+          ['gnome-terminal', []],
+          ['konsole', []],
+          ['xfce4-terminal', []],
+        ];
+
+  for (const [bin, args] of candidates) {
+    try {
+      const child = spawn(bin, args, { cwd: dir, detached: true, stdio: 'ignore' });
+      await new Promise((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
+      child.unref();
+      return { ok: true, dir, bin };
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+  throw new Error('系统里没有找到可用的终端程序');
+}
+// prize add by yanliang for 顶栏两个本地动作：打开仓库目录 / 在仓库目录开命令行, 20261028-end
+
 // prize add by yanliang for HTTP 路由与静态资源托管, 20261022-start
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -1677,6 +1739,15 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, await revealInFileManager(repo, String(body.path || '')));
     }
     // prize add by yanliang for 在文件夹中显示当前文件（解释文档顶部的绝对路径点击）, 20261024-end
+
+    // prize add by yanliang for 顶栏「打开目录 / 打开命令行」两个本地动作, 20261028-start
+    if (action === 'open-dir' || action === 'open-shell') {
+      if (req.method !== 'POST') throw new Error('该接口只接受 POST');
+      if (!isLoopbackRequest(req)) throw new Error('只有在运行服务的本机上才能打开本地窗口');
+      const result = action === 'open-dir' ? await openDirInFileManager(repo) : await openShellAt(repo);
+      return sendJson(res, 200, result);
+    }
+    // prize add by yanliang for 顶栏「打开目录 / 打开命令行」两个本地动作, 20261028-end
 
     return sendJson(res, 404, { error: '未知接口' });
   } catch (err) {
