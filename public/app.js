@@ -163,6 +163,9 @@ const state = {
   finderData: null,
   finderSel: '',
   // prize add by yanliang for 目录选择器状态：当前目录数据与高亮项, 20261023-end
+  // prize add by yanliang for 目录选择器可被外部功能复用（ADB 选来源目录）, 20261029-start
+  finderCb: null,
+  // prize add by yanliang for 目录选择器可被外部功能复用（ADB 选来源目录）, 20261029-end
 };
 
 const MAX_COMPARE = 2;
@@ -3126,9 +3129,12 @@ const REPO_ICON =
   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="6" cy="18" r="2.4"></circle><circle cx="18" cy="12" r="2.4"></circle><path d="M6 8.4v7.2M8.4 6h4.1a3 3 0 0 1 3 3v.9M8.4 18h4.1a3 3 0 0 0 3-3v-.9"></path></svg>';
 
 function finderShell() {
+  // prize add by yanliang for 目录选择器支持外部回调（ADB 选来源目录复用同一套界面）, 20261029-start
+  const external = !!state.finderCb;
+  // prize add by yanliang for 目录选择器支持外部回调（ADB 选来源目录复用同一套界面）, 20261029-end
   return `
     <div class="modal-head">
-      <span class="modal-title">选择仓库目录</span>
+      <span class="modal-title">${external ? '选择目录' : '选择仓库目录'}</span>
       <button class="modal-close" data-finder-close title="关闭">&times;</button>
     </div>
     <div class="finder-nav">
@@ -3144,7 +3150,9 @@ function finderShell() {
     </div>`;
 }
 
-function openFinder() {
+// prize add by yanliang for 目录选择器支持外部回调（ADB 选来源目录复用同一套界面）, 20261029-start
+function openFinder(onPick) {
+  state.finderCb = typeof onPick === 'function' ? onPick : null;
   state.finderOpen = true;
   state.finderSel = '';
   state.finderData = null;
@@ -3157,12 +3165,14 @@ function openFinder() {
     ($('#repoPath') ? $('#repoPath').value.trim() : '');
   finderGo(start);
 }
+// prize add by yanliang for 目录选择器支持外部回调（ADB 选来源目录复用同一套界面）, 20261029-end
 
 function closeFinder() {
   if (!state.finderOpen) return;
   state.finderOpen = false;
   state.finderSel = '';
   state.finderData = null;
+  state.finderCb = null;
   $('#finderMask').classList.add('hidden');
   $('#finderModal').innerHTML = '';
 }
@@ -3245,8 +3255,15 @@ function syncFinderFoot() {
   }
   const btn = $('#finderPick');
   if (btn) {
-    btn.textContent = isRepo ? '打开这个仓库' : '选择此目录';
-    btn.classList.toggle('primary', isRepo);
+    // prize add by yanliang for 外部回调模式（ADB 选目录）只负责选目录，不提示打开仓库, 20261029-start
+    if (state.finderCb) {
+      btn.textContent = '选择此目录';
+      btn.classList.add('primary');
+    } else {
+      // prize add by yanliang for 外部回调模式（ADB 选目录）只负责选目录，不提示打开仓库, 20261029-end
+      btn.textContent = isRepo ? '打开这个仓库' : '选择此目录';
+      btn.classList.toggle('primary', isRepo);
+    }
   }
 }
 
@@ -3254,7 +3271,14 @@ async function finderConfirm() {
   const d = state.finderData;
   const target = state.finderSel || (d && d.path);
   if (!target) return;
+  // prize add by yanliang for 目录选择器支持外部回调（ADB 选来源目录复用同一套界面）, 20261029-start
+  const cb = state.finderCb;
   closeFinder();
+  if (cb) {
+    cb(target);
+    return;
+  }
+  // prize add by yanliang for 目录选择器支持外部回调（ADB 选来源目录复用同一套界面）, 20261029-end
   $('#repoPath').value = target;
   // openRepo 成功后会把路径记进 gdv.repo，刷新时自动打开，这就是“默认”
   await openRepo(target);

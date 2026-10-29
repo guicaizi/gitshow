@@ -23,6 +23,9 @@ const { createJump } = require('./server-jump');
 // prize add by yanliang for 查找引用：反向查询也单独放一个文件, 20261027-start
 const { createRefs } = require('./server-refs');
 // prize add by yanliang for 查找引用：反向查询也单独放一个文件, 20261027-end
+// prize add by yanliang for ADB 框架目录替换：设备探测与推送也单独放一个文件, 20261029-start
+const { createAdb } = require('./server-adb');
+// prize add by yanliang for ADB 框架目录替换：设备探测与推送也单独放一个文件, 20261029-end
 
 // prize add by yanliang for 新增 git 可执行文件探测, 20261022-start
 const GIT_CANDIDATES = [
@@ -1318,6 +1321,10 @@ function isLoopbackRequest(req) {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
+// prize add by yanliang for 顶栏 ADB 框架替换：探测设备 / 推送 framework 目录, 20261029-start
+const adbTool = createAdb({ rootDir: __dirname, isLoopback: isLoopbackRequest });
+// prize add by yanliang for 顶栏 ADB 框架替换：探测设备 / 推送 framework 目录, 20261029-end
+
 async function revealInFileManager(repo, rawPath) {
   const rel = safeRelPath(rawPath);
   const abs = worktreeFile(repo, rel);
@@ -1605,6 +1612,14 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, { ok: true, host: target.host });
     }
     // prize add by yanliang for 问 AI：给浏览器签发本机 Harness 的登录 cookie, 20261026-end
+
+    // prize add by yanliang for 顶栏 ADB 框架替换：状态 / 扫描 / 推送 / 日志, 20261029-start
+    // 放在 resolveRepo 之前：这些接口跟 git 仓库无关，只操作本机 adb 与设备
+    if (action.startsWith('adb-')) {
+      const body = req.method === 'POST' ? await readJsonBody(req, 1024 * 1024) : {};
+      return sendJson(res, 200, await adbTool.handle(action, { req, q, body }));
+    }
+    // prize add by yanliang for 顶栏 ADB 框架替换：状态 / 扫描 / 推送 / 日志, 20261029-end
 
     const repo = await resolveRepo(q.get('repo'));
 
