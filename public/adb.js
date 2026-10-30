@@ -27,6 +27,10 @@
     packs: [],
     // prize add by yanliang for 组合包：勾选的配对存成带名字的组合, 20261029-end
     busy: false,
+    // prize add by yanliang for 手动提权：记录本次提权结果（serial + remounted）, 20261030-start
+    rootInfo: null, // { serial, root, remounted, error, steps }
+    rootBusy: false,
+    // prize add by yanliang for 手动提权：记录本次提权结果（serial + remounted）, 20261030-end
     jobId: '',
     cursor: 0,
     timer: 0,
@@ -378,6 +382,20 @@
       )
       .join('');
 
+    const rootChip = dev.root
+      ? `<span class="adb-chip good">root 已获取${
+          S.rootInfo && S.rootInfo.serial === dev.serial
+            ? S.rootInfo.remounted
+              ? ' · /system 可写'
+              : ' · 未 remount'
+            : ''
+        }</span>`
+      : `<button class="adb-chip warn adb-root-btn" id="adbRootBtn"${
+          S.rootBusy ? ' disabled' : ''
+        } title="执行 adb root → adb remount，然后重新读取身份与分区状态">${
+          S.rootBusy ? '提权中…' : '非 root · 点此提权'
+        }</button>`;
+
     bar.innerHTML = `
       <div class="adb-dev-row">
         <span class="adb-dev-state">已连接</span>
@@ -388,9 +406,18 @@
         }
         <span class="adb-chip">Android ${esc(dev.release || '?')}</span>
         <span class="adb-chip">${esc(dev.abi || '?')}</span>
-        <span class="adb-chip ${dev.root ? 'good' : 'warn'}">${dev.root ? 'root 已获取' : '非 root'}</span>
+        ${rootChip}
         <span class="adb-dev-serial">${esc(dev.serial)}</span>
-      </div>`;
+      </div>
+      ${
+        S.rootInfo && S.rootInfo.serial === dev.serial && S.rootInfo.error
+          ? `<div class="adb-root-err">${esc(S.rootInfo.error)}</div>`
+          : ''
+      }`;
+
+    const rootBtn = $('adbRootBtn');
+    if (rootBtn) rootBtn.addEventListener('click', () => doRoot(dev.serial));
+
 
     const sel = $('adbDeviceSel');
     if (sel) {
@@ -403,6 +430,36 @@
     }
     paintRunState();
   }
+
+  // prize add by yanliang for 手动提权：点徽标执行 adb root + adb remount, 20261030-start
+  async function doRoot(serial) {
+    if (S.rootBusy || S.running) return;
+    S.rootBusy = true;
+    renderDeviceBar();
+    try {
+      const r = await apiPost('adb-root', { serial });
+      S.rootInfo = {
+        serial,
+        root: !!r.root,
+        remounted: !!r.remounted,
+        error: r.error || '',
+        steps: r.steps || [],
+      };
+      // 提权会重启 adbd，设备可能刚回来，强制重新探一次状态
+      await refreshStatus(true, true);
+      if (r.ok) toast('已获取 root，/system 已可写');
+      else if (r.root) toast('root 已获取，但 /system 不可写：' + (r.error || ''), true);
+      else toast(r.error || '提权失败：adb root 未生效', true);
+      if (!r.ok && (r.steps || []).length) console.warn('[adb 提权步骤]', r.steps);
+    } catch (err) {
+      S.rootInfo = null;
+      toast('提权失败：' + err.message, true);
+    } finally {
+      S.rootBusy = false;
+      if (S.open) renderDeviceBar();
+    }
+  }
+  // prize add by yanliang for 手动提权：点徽标执行 adb root + adb remount, 20261030-end
 
   /* ---------------- 配对列表 ---------------- */
 

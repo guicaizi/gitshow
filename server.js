@@ -1615,6 +1615,11 @@ async function handleApi(req, res, urlObj) {
 
     // prize add by yanliang for 顶栏 ADB 框架替换：状态 / 扫描 / 推送 / 日志, 20261029-start
     // 放在 resolveRepo 之前：这些接口跟 git 仓库无关，只操作本机 adb 与设备
+    // prize add by yanliang for 设备截图页：截图是 PNG，直接回二进制, 20261029-start
+    if (action === 'adb-shot-file') {
+      return adbTool.sendShot(req, res, q.get('id'));
+    }
+    // prize add by yanliang for 设备截图页：截图是 PNG，直接回二进制, 20261029-end
     if (action.startsWith('adb-')) {
       const body = req.method === 'POST' ? await readJsonBody(req, 1024 * 1024) : {};
       return sendJson(res, 200, await adbTool.handle(action, { req, q, body }));

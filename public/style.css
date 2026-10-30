@@ -4004,3 +4004,422 @@ body.mode-source .repo-open { flex: 1; max-width: 820px; }
   font-weight: 600;
 }
 /* prize add by yanliang for ADB 组合包：命名保存与列表, 20261029-end */
+
+/* prize add by yanliang for 设备截图页：左截图 + 右布局树, 20261029-start */
+.shot-page {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+body.shot-open { overflow: hidden; }
+body.shot-col-resize { cursor: col-resize; }
+body.shot-col-resize * { user-select: none; }
+
+.shot-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  height: 46px;
+  padding: 0 12px;
+  background: var(--bg-sub);
+  border-bottom: 1px solid var(--border);
+}
+
+.shot-back { padding: 0; width: 26px; }
+
+.shot-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.shot-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.shot-dev {
+  height: 26px;
+  max-width: 220px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.shot-bar-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.shot-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* ---------- 左侧：截图 ---------- */
+.shot-left {
+  flex: 0 0 52%;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.shot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.shot-zoom {
+  min-width: 40px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.shot-hint {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.shot-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding: 12px;
+  overflow: auto;
+  background-color: var(--bg-sub);
+  background-image:
+    linear-gradient(45deg, rgba(128, 128, 128, .07) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128, 128, 128, .07) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, .07) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, .07) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.shot-canvas {
+  position: relative;
+  flex: 0 0 auto;
+  margin: auto;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .18);
+}
+
+.shot-canvas img {
+  display: block;
+  -webkit-user-drag: none;
+}
+
+.shot-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.shot-box { position: absolute; border-radius: 2px; }
+.shot-box.all { border: 1px dashed rgba(255, 138, 0, .7); }
+.shot-box.sel {
+  border: 1.5px solid var(--accent);
+  background: rgba(9, 105, 218, .12);
+  outline: 1px solid rgba(255, 255, 255, .7);
+}
+
+.shot-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  text-align: center;
+  color: var(--text-3);
+  background: var(--bg-sub);
+}
+
+.shot-placeholder.shot-bad { color: var(--del-text); }
+
+.shot-split {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--border-soft);
+  transition: background .12s;
+}
+
+.shot-split:hover { background: var(--accent-soft); }
+
+/* ---------- 右侧：布局 ---------- */
+.shot-right {
+  flex: 1 1 0;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+}
+
+.shot-info {
+  flex-shrink: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.shot-info-grid {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 3px 8px;
+  font-size: 11.5px;
+}
+
+.shot-info-k { color: var(--text-3); }
+
+.shot-info-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  color: var(--text-2);
+}
+
+.shot-info-err { font-size: 11.5px; line-height: 1.65; color: var(--del-text); }
+.shot-info-empty { font-size: 11.5px; color: var(--text-3); }
+.shot-info-warn { margin-top: 6px; font-size: 11px; color: #bf8700; }
+
+.shot-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.shot-find .adb-input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  height: 28px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+}
+
+.shot-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 3px 0 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.shot-tree-empty {
+  padding: 16px 12px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--text-3);
+}
+
+.shot-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 8px 2px 0;
+  white-space: nowrap;
+  cursor: default;
+  border-left: 2px solid transparent;
+}
+
+.shot-row:hover { background: var(--bg-hover); }
+.shot-row.on { background: var(--accent-soft); border-left-color: var(--accent); }
+
+.shot-caret {
+  flex: 0 0 10px;
+  width: 10px;
+  font-size: 9px;
+  color: var(--text-3);
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.shot-caret.leaf { opacity: .35; cursor: default; }
+
+.shot-cls { flex: 0 0 auto; color: var(--text); }
+
+.shot-txt {
+  flex: 0 1 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--accent);
+}
+
+.shot-rid {
+  flex: 0 1 auto;
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+}
+
+.shot-desc {
+  flex: 0 1 auto;
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--add-text);
+}
+
+.shot-flag {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--text-3);
+  background: var(--bg-sub);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.shot-flag.click { color: var(--add-text); background: var(--add-bg); border-color: transparent; }
+.shot-flag.off { color: var(--del-text); background: var(--del-bg); border-color: transparent; }
+
+.shot-detail {
+  flex: 0 0 auto;
+  max-height: 44%;
+  overflow: auto;
+  padding: 8px 12px 10px;
+  background: var(--bg-sub);
+  border-top: 1px solid var(--border);
+}
+
+.shot-detail-empty { font-size: 11.5px; line-height: 1.7; color: var(--text-3); }
+
+.shot-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
+.shot-detail-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.shot-detail-depth {
+  margin-right: auto;
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.shot-detail-grid {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 2px 8px;
+  font-size: 11px;
+}
+
+.shot-detail-k { color: var(--text-3); }
+
+.shot-detail-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.shot-detail-v.mono { font-family: var(--mono); }
+
+@media (max-width: 900px) {
+  .shot-body { flex-direction: column; }
+  .shot-left { flex: 0 0 46%; min-width: 0; }
+  .shot-right { min-width: 0; border-left: none; border-top: 1px solid var(--border); }
+  .shot-split { display: none; }
+}
+/* prize add by yanliang for 设备截图页：左截图 + 右布局树, 20261029-end */
+
+/* prize add by yanliang for 截图页：树上划过节点时图上的淡色预览框, 20261029-start */
+.shot-box.hover {
+  border: 1px solid rgba(255, 138, 0, .85);
+  background: rgba(255, 138, 0, .09);
+}
+/* prize add by yanliang for 截图页：树上划过节点时图上的淡色预览框, 20261029-end */
+
+/* prize add by yanliang for 设备行：非 root 徽标做成可点的提权按钮, 20261030-start */
+.adb-root-btn {
+  font-family: var(--sans);
+  line-height: 1.5;
+  cursor: pointer;
+  transition: box-shadow .12s, filter .12s;
+}
+
+.adb-root-btn:hover {
+  filter: brightness(.97);
+  box-shadow: 0 0 0 3px rgba(191, 135, 0, .13);
+}
+
+.adb-root-btn:active { transform: translateY(.5px); }
+
+.adb-root-btn:disabled {
+  opacity: .62;
+  cursor: progress;
+  box-shadow: none;
+}
+/* prize add by yanliang for 设备行：非 root 徽标做成可点的提权按钮, 20261030-end */
+
+/* prize add by yanliang for 提权失败原因常驻在设备行下方, 20261030-start */
+.adb-root-err {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #bf8700;
+}
+/* prize add by yanliang for 提权失败原因常驻在设备行下方, 20261030-end */

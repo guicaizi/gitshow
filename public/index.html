@@ -58,6 +58,15 @@
     </button>
     <!-- prize add by yanliang for 顶栏 ADB 入口：检测连接并替换设备 framework 目录, 20261029-end -->
 
+    <!-- prize add by yanliang for 顶栏截图入口：抓设备当前界面看截图 + 布局树, 20261029-start -->
+    <button id="shotBtn" class="btn icon" type="button" title="抓取设备当前界面：左边截图，右边布局树" aria-label="抓取设备界面">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.2-1.6A1 1 0 0 1 9.5 5h5a1 1 0 0 1 .8.4L16.5 7h2A1.5 1.5 0 0 1 20 8.5v8A1.5 1.5 0 0 1 18.5 18h-13A1.5 1.5 0 0 1 4 16.5z"></path>
+        <circle cx="12" cy="12.5" r="3.2"></circle>
+      </svg>
+    </button>
+    <!-- prize add by yanliang for 顶栏截图入口：抓设备当前界面看截图 + 布局树, 20261029-end -->
+
     <div class="top-tools">
       <label class="field">
         <span class="field-label">分支</span>
@@ -124,6 +133,10 @@
 </div>
 <!-- prize add by yanliang for ADB 框架替换面板容器, 20261029-end -->
 
+<!-- prize add by yanliang for 设备截图页容器（整页覆盖，不是弹窗）, 20261029-start -->
+<div class="shot-page hidden" id="shotPage" role="dialog" aria-modal="true" aria-label="设备截图与布局"></div>
+<!-- prize add by yanliang for 设备截图页容器（整页覆盖，不是弹窗）, 20261029-end -->
+
 <script src="/app.js"></script>
 <!-- prize add by yanliang for 源码跳转：Ctrl+Click 找定义, 20261026-start -->
 <script src="/jump.js"></script>
@@ -137,5 +150,8 @@
 <!-- prize add by yanliang for ADB 框架目录替换：顶栏入口 + 面板, 20261029-start -->
 <script src="/adb.js"></script>
 <!-- prize add by yanliang for ADB 框架目录替换：顶栏入口 + 面板, 20261029-end -->
+<!-- prize add by yanliang for 设备截图页：抓屏 + 布局树, 20261029-start -->
+<script src="/shot.js"></script>
+<!-- prize add by yanliang for 设备截图页：抓屏 + 布局树, 20261029-end -->
 </body>
 </html>

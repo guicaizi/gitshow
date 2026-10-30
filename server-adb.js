@@ -207,6 +207,101 @@ function createAdb(opts) {
     return data;
   }
 
+  // prize add by yanliang for 手动提权：adb root + adb remount 后再给状态, 20261030-start
+  /**
+   * 面板上点「提权」走这里：adb root → 等 adbd 回来 → adb remount → 写探针验证 → 报状态
+   * 一律不抛异常，每步的原始输出都塞进 steps 给前端展示，失败也让人看得见原因
+   */
+  async function elevate(serialRaw) {
+    const serial = serialRaw ? safeSerial(serialRaw) : await firstOnlineSerial();
+    const steps = [];
+    const add = (cmd, r, kind) => {
+      steps.push({
+        cmd,
+        code: r && typeof r.code === 'number' ? r.code : -1,
+        out: r ? runOut(r) : '',
+        kind: kind || (r && r.code === 0 ? 'ok' : 'error'),
+      });
+    };
+    const st = await run(['-s', serial, 'get-state'], 10000);
+    if (st.code !== 0 || !/device/.test(st.out || '')) {
+      add('adb -s ' + serial + ' get-state', st, 'error');
+      return { ok: false, root: false, remounted: false, error: '设备不在线，请检查 USB 连接与调试授权', steps };
+    }
+
+    // 已经是 root 就别再重启一次 adbd：adb root 会让设备短暂 offline
+    const uid0 = await run(['-s', serial, 'shell', 'id -u'], 10000);
+    let isRoot = (uid0.out || '').trim() === '0';
+    if (isRoot) add('adb shell id -u', uid0, 'ok');
+
+    if (!isRoot) {
+      const r = await run(['-s', serial, 'root'], 25000);
+      add('adb -s ' + serial + ' root', r, r.code === 0 ? 'ok' : 'error');
+      const text = (r.out || '') + (r.err || '');
+      if (/cannot run as root/i.test(text)) {
+        return {
+          ok: false,
+          root: false,
+          remounted: false,
+          production: true,
+          error: '这台设备是 user 版本，adb root 被系统禁掉了。framework 替换需要 userdebug / eng 版本，或已 root 的 boot。',
+          steps,
+        };
+      }
+      // adb root 会重启 adbd，必须等它回来再探身份
+      const w = await run(['-s', serial, 'wait-for-device'], 45000);
+      add('adb -s ' + serial + ' wait-for-device', w, w.code === 0 ? 'ok' : 'error');
+      const uid1 = await run(['-s', serial, 'shell', 'id -u'], 10000);
+      isRoot = (uid1.out || '').trim() === '0';
+      add('adb shell id -u', uid1, isRoot ? 'ok' : 'error');
+    }
+
+    let remounted = false;
+    let remountText = '';
+    if (isRoot) {
+      const rm = await run(['-s', serial, 'remount'], 45000);
+      add('adb -s ' + serial + ' remount', rm, rm.code === 0 ? 'ok' : 'warn');
+      remountText = (rm.out || '') + (rm.err || '');
+      if (rm.code !== 0 || /failed|not permitted|read-only/i.test(remountText)) {
+        // 老机型 / 部分 MTK 平台 remount 子命令不认，退回 mount 重挂
+        const rm2 = await run(['-s', serial, 'shell', 'mount -o rw,remount /'], 25000);
+        add('adb shell mount -o rw,remount /', rm2, rm2.code === 0 ? 'ok' : 'warn');
+        remountText += (rm2.out || '') + (rm2.err || '');
+      }
+      // remount 在 Android 10+ 上可能重启 adbd（overlayfs），再来一次等待
+      await run(['-s', serial, 'wait-for-device'], 40000);
+
+      // 写探针比看 remount 输出可靠：能真的创建文件才算可写
+      const probe = await run(
+        ['-s', serial, 'shell', 'touch /system/.gdv_probe 2>&1 && echo __GdvOk; rm -f /system/.gdv_probe'],
+        15000
+      );
+      remounted = /__GdvOk/.test(probe.out || '');
+      add('adb shell touch /system/.gdv_probe', probe, remounted ? 'ok' : 'warn');
+    }
+
+    // 状态缓存作废，前端刷新时拿到的是提权后的真实身份
+    statusCache = { at: 0, data: null };
+
+    let error = '';
+    if (!isRoot) error = 'adb root 没有生效（uid 仍不是 0），这台设备可能只允许 shell 身份。';
+    else if (!remounted) {
+      error = /disable-verity|verity/i.test(remountText)
+        ? 'remount 失败：需要先 adb disable-verity，然后 adb reboot，开机后再次提权。'
+        : 'root 已获取，但 /system 仍不可写（remount 未成功），替换前需要先解决分区可写。';
+    }
+
+    return {
+      ok: isRoot && remounted,
+      root: isRoot,
+      remounted,
+      production: false,
+      error,
+      steps,
+    };
+  }
+  // prize add by yanliang for 手动提权：adb root + adb remount 后再给状态, 20261030-end
+
   /* ---------------- 本地目录 ---------------- */
 
   // 单层列表（选择文件用）：目录与文件都列，文件不限扩展名
@@ -752,6 +847,253 @@ function createAdb(opts) {
     };
   }
 
+  // prize add by yanliang for 设备截图页：screencap 抓屏 + uiautomator 布局树, 20261029-start
+  const shotsDir = path.join(dataDir, 'adb-shots');
+  const SHOT_KEEP = 24;
+  const MAX_UI_NODES = 4000;
+  const MAX_UI_DEPTH = 40;
+
+  // 只读 PNG 头拿真实像素尺寸，比信 wm size 靠谱（可能是 override 尺寸）
+  function pngSize(buf) {
+    if (!buf || buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) return null;
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+
+  async function firstOnlineSerial() {
+    const dev = await run(['devices'], 12000);
+    const list = parseDevices(dev.out).filter((d) => d.state === 'device');
+    if (!list.length) throw new Error('没有已连接的设备');
+    return list[0].serial;
+  }
+
+  async function screenInfo(serial) {
+    const r = await run(['-s', serial, 'shell', 'wm size; wm density'], 12000);
+    const size = /Override size:\s*(\d+)x(\d+)/.exec(r.out) || /Physical size:\s*(\d+)x(\d+)/.exec(r.out);
+    const dens = /Override density:\s*(\d+)/.exec(r.out) || /Physical density:\s*(\d+)/.exec(r.out);
+    return {
+      width: size ? Number(size[1]) : 0,
+      height: size ? Number(size[2]) : 0,
+      density: dens ? Number(dens[1]) : 0,
+    };
+  }
+
+  function pruneShots() {
+    try {
+      const files = fs
+        .readdirSync(shotsDir)
+        .filter((n) => /^shot-\d+\.png$/.test(n))
+        .map((n) => ({ n, t: fs.statSync(path.join(shotsDir, n)).mtimeMs }))
+        .sort((a, b) => b.t - a.t);
+      files.slice(SHOT_KEEP).forEach((f) => {
+        try {
+          fs.unlinkSync(path.join(shotsDir, f.n));
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+
+  // screencap 走 exec-out 会被当字符串解坏，统一「设备落文件 → adb pull」
+  async function captureShot(serialRaw) {
+    const serial = serialRaw ? safeSerial(serialRaw) : await firstOnlineSerial();
+    const remote = '/data/local/tmp/.gdv-screen.png';
+    const cap = await run(['-s', serial, 'shell', 'screencap -p ' + remote], 40000);
+    if (cap.code !== 0) throw new Error('截图失败：' + runOut(cap));
+    fs.mkdirSync(shotsDir, { recursive: true });
+    const id = 'shot-' + Date.now() + '.png';
+    const abs = path.join(shotsDir, id);
+    const pull = await run(['-s', serial, 'pull', remote, abs], 90000);
+    run(['-s', serial, 'shell', 'rm -f ' + remote], 8000).catch(() => {});
+    if (pull.code !== 0 || !fs.existsSync(abs)) throw new Error('拉取截图失败：' + runOut(pull));
+    const buf = fs.readFileSync(abs);
+    if (!buf.length) throw new Error('截图文件是空的');
+    const px = pngSize(buf) || { width: 0, height: 0 };
+    pruneShots();
+    const info = await screenInfo(serial).catch(() => ({ width: 0, height: 0, density: 0 }));
+    return {
+      ok: true,
+      id,
+      url: '/api/adb-shot-file?id=' + encodeURIComponent(id),
+      serial,
+      width: px.width,
+      height: px.height,
+      size: buf.length,
+      sizeText: fmtSize(buf.length),
+      screen: info,
+      at: Date.now(),
+    };
+  }
+
+  function decodeXml(s) {
+    return String(s || '')
+      .replace(/&#(\d+);/g, (m, d) => String.fromCharCode(Number(d)))
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, '&');
+  }
+
+  function parseBounds(v) {
+    const m = /\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/.exec(v || '');
+    if (!m) return null;
+    return [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  }
+
+  /**
+   * uiautomator dump 的 XML 结构很规整（<hierarchy><node .../>...</hierarchy>），
+   * 为了不引依赖就手写一个极简解析：只认开始 / 自闭合 / 结束三种标签。
+   */
+  function parseUiXml(xml) {
+    const root = { depth: 0, cls: '', kids: [] };
+    const stack = [root];
+    let seq = 1;
+    let total = 0;
+    let truncated = false;
+    let rotation = 0;
+    const tagRe = /<(\/?)([a-zA-Z]+)([^>]*?)(\/?)>/g;
+    let m;
+    while ((m = tagRe.exec(xml))) {
+      const closing = m[1] === '/';
+      const tag = m[2];
+      const attrs = m[3] || '';
+      const selfClose = m[4] === '/';
+      if (closing) {
+        if (stack.length > 1) stack.pop();
+        continue;
+      }
+      if (tag === 'hierarchy') {
+        const rot = /\brotation="(\d+)"/.exec(attrs);
+        if (rot) rotation = Number(rot[1]);
+        if (!selfClose) stack.push(root);
+        continue;
+      }
+      if (tag !== 'node') {
+        if (!selfClose) stack.push(stack[stack.length - 1]);
+        continue;
+      }
+      const parent = stack[stack.length - 1];
+      if (total >= MAX_UI_NODES || parent.depth >= MAX_UI_DEPTH) {
+        truncated = true;
+        if (!selfClose) stack.push(parent);
+        continue;
+      }
+      const a = {};
+      const ar = /([\w:-]+)="([^"]*)"/g;
+      let am;
+      while ((am = ar.exec(attrs))) a[am[1]] = am[2];
+      const node = {
+        id: seq++,
+        depth: parent.depth + 1,
+        idx: Number(a.index || 0),
+        cls: decodeXml(a['class'] || ''),
+        txt: decodeXml(a.text || ''),
+        rid: decodeXml(a['resource-id'] || ''),
+        desc: decodeXml(a['content-desc'] || ''),
+        pkg: a.package || '',
+        b: parseBounds(a.bounds) || [0, 0, 0, 0],
+        click: a.clickable === 'true',
+        longClick: a['long-clickable'] === 'true',
+        scroll: a.scrollable === 'true',
+        checkable: a.checkable === 'true',
+        checked: a.checked === 'true',
+        enabled: a.enabled !== 'false',
+        selected: a.selected === 'true',
+        focusable: a.focusable === 'true',
+        focused: a.focused === 'true',
+        password: a.password === 'true',
+        kids: [],
+      };
+      parent.kids.push(node);
+      total++;
+      if (!selfClose) stack.push(node);
+    }
+    let clickable = 0;
+    let texts = 0;
+    const walk = (n) => {
+      if (n.click) clickable++;
+      if (n.txt) texts++;
+      n.kids.forEach(walk);
+    };
+    root.kids.forEach(walk);
+    return {
+      tree: root.kids,
+      stats: { total, clickable, texts, truncated, rotation },
+    };
+  }
+
+  async function focusedWindow(serial) {
+    // dumpsys window 里 mCurrentFocus 会出现多次（先 null 后真值），取最后一条能解析的
+    const r = await run(['-s', serial, 'shell', 'dumpsys window | grep mCurrentFocus'], 15000);
+    const lines = (r.out || '').split(/\r?\n/).filter((l) => l.includes('mCurrentFocus'));
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = /([A-Za-z0-9_.]+)\/([A-Za-z0-9_.$]+)/.exec(lines[i]);
+      if (m) return m[1] + '/' + m[2];
+    }
+    const r2 = await run(['-s', serial, 'shell', 'dumpsys activity activities | grep -m1 mResumedActivity'], 15000);
+    const m2 = /([A-Za-z0-9_.]+)\/([A-Za-z0-9_.$]+)/.exec(r2.out || '');
+    return m2 ? m2[1] + '/' + m2[2] : '';
+  }
+
+  async function dumpLayout(serialRaw) {
+    const serial = serialRaw ? safeSerial(serialRaw) : await firstOnlineSerial();
+    let remote = '/data/local/tmp/.gdv-ui.xml';
+    let r = await run(['-s', serial, 'shell', 'uiautomator dump ' + remote], 45000);
+    if (r.code !== 0 || /ERROR|could not|No such file/i.test(r.out + r.err)) {
+      // 个别机型不允许写 /data/local/tmp，退回默认路径
+      const r2 = await run(['-s', serial, 'shell', 'uiautomator dump'], 45000);
+      if (r2.code !== 0) throw new Error('读取布局失败：' + (runOut(r2) || runOut(r)));
+      r = r2;
+      remote = '/sdcard/window_dump.xml';
+    }
+    const stamp = Date.now();
+    const local = path.join(os.tmpdir(), 'gdv-ui-' + stamp + '.xml');
+    const pull = await run(['-s', serial, 'pull', remote, local], 60000);
+    if (pull.code !== 0 || !fs.existsSync(local)) throw new Error('拉取布局文件失败：' + runOut(pull));
+    const xml = fs.readFileSync(local, 'utf8');
+    try {
+      fs.unlinkSync(local);
+    } catch (_) {}
+    if (!/<hierarchy/i.test(xml)) throw new Error('布局文件内容异常（不是 uiautomator 的 XML）');
+    const parsed = parseUiXml(xml);
+    const focus = await focusedWindow(serial).catch(() => '');
+    const screen = await screenInfo(serial).catch(() => ({ width: 0, height: 0, density: 0 }));
+    return {
+      ok: true,
+      serial,
+      tree: parsed.tree,
+      stats: parsed.stats,
+      focus,
+      screen,
+      xmlSize: Buffer.byteLength(xml, 'utf8'),
+      at: stamp,
+    };
+  }
+
+  // 截图文件由浏览器直接 <img> 拉，走原始二进制而不是 JSON
+  function sendShot(req, res, id) {
+    if (!isLoopback(req)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('ADB 只能在运行服务的本机上访问');
+    }
+    const name = String(id || '');
+    if (!/^shot-\d+\.png$/.test(name)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('截图 id 不合法');
+    }
+    const abs = path.join(shotsDir, name);
+    if (!fs.existsSync(abs)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('截图不存在（可能已被清理）');
+    }
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'private, max-age=31536000, immutable',
+      'Content-Length': fs.statSync(abs).size,
+    });
+    fs.createReadStream(abs).pipe(res);
+  }
+  // prize add by yanliang for 设备截图页：screencap 抓屏 + uiautomator 布局树, 20261029-end
+
   /* ---------------- 路由 ---------------- */
 
   async function handle(action, ctx) {
@@ -799,7 +1141,6 @@ function createAdb(opts) {
 
       case 'adb-local-ls':
         return localList(q.get('dir'));
-
       case 'adb-local-tree':
         return scanTree(q.get('dir'));
 
@@ -845,12 +1186,26 @@ function createAdb(opts) {
       case 'adb-history':
         return history();
 
+      // prize add by yanliang for 手动提权：adb root + adb remount 后再给状态, 20261030-start
+      case 'adb-root':
+        if (ctx.req.method !== 'POST') throw new Error('该接口只接受 POST');
+        return elevate((body.serial || q.get('serial') || '').trim());
+      // prize add by yanliang for 手动提权：adb root + adb remount 后再给状态, 20261030-end
+
+      // prize add by yanliang for 设备截图页：抓屏 + 布局树, 20261029-start
+      case 'adb-shot':
+        return captureShot((body.serial || q.get('serial') || '').trim());
+
+      case 'adb-layout':
+        return dumpLayout((body.serial || q.get('serial') || '').trim());
+      // prize add by yanliang for 设备截图页：抓屏 + 布局树, 20261029-end
+
       default:
         throw new Error('未知接口');
     }
   }
 
-  return { handle, ensureAdb: () => ensureAdb(true), status };
+  return { handle, ensureAdb: () => ensureAdb(true), status, sendShot };
 }
 // prize add by yanliang for ADB 框架替换模块（配对版）, 20261029-end
 
