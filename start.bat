@@ -2,36 +2,40 @@
 chcp 936 >nul
 setlocal
 cd /d "%~dp0"
-title Git Ìá½»±È¶Ô¹¤¾ß
+title Git ï¿½á½»ï¿½È¶Ô¹ï¿½ï¿½ï¿½
 
 set "PORT=7391"
 set "URL=http://127.0.0.1:%PORT%"
 
-rem ===== 1. ÕÒ node =====
+rem ===== 1. ï¿½ï¿½ node =====
 set "NODE_EXE="
 where node >nul 2>nul
 if not errorlevel 1 set "NODE_EXE=node"
 if not defined NODE_EXE if exist "%ProgramFiles%\nodejs\node.exe" set "NODE_EXE=%ProgramFiles%\nodejs\node.exe"
 if not defined NODE_EXE if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "NODE_EXE=%LOCALAPPDATA%\Programs\nodejs\node.exe"
-if not defined NODE_EXE if exist "C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2-6\node.exe" set "NODE_EXE=C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
+rem prize fix by yanliang  20261102-start
+rem å…œåº•è·¯å¾„æ”¹ç”¨ %USERPROFILE%ï¼Œä¸å†å†™æ­» Administratorï¼›å¹¶æ”¯æŒ versions ä¸‹ä»»æ„ç‰ˆæœ¬ç›®å½•
+if not defined NODE_EXE if exist "%USERPROFILE%\.workbuddy\binaries\node\versions\22.22.2-6\node.exe" set "NODE_EXE=%USERPROFILE%\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
+if not defined NODE_EXE for /d %%D in ("%USERPROFILE%\.workbuddy\binaries\node\versions\*") do if not defined NODE_EXE if exist "%%D\node.exe" set "NODE_EXE=%%D\node.exe"
+rem prize fix by yanliang for ä¿®å¤æ‰¾ä¸åˆ° node, 20261102-end
 if not defined NODE_EXE (
-  echo [´íÎó] Ã»ÓÐÕÒµ½ node¡£
-  echo ÇëÏÈ°²×° Node.js£¬»ò°Ñ node.exe ËùÔÚÄ¿Â¼¼Ó½ø PATH¡£
+  echo [ï¿½ï¿½ï¿½ï¿½] Ã»ï¿½ï¿½ï¿½Òµï¿½ nodeï¿½ï¿½
+  echo ï¿½ï¿½ï¿½È°ï¿½×° Node.jsï¿½ï¿½ï¿½ï¿½ï¿½ node.exe ï¿½ï¿½ï¿½ï¿½Ä¿Â¼ï¿½Ó½ï¿½ PATHï¿½ï¿½
   pause
   exit /b 1
 )
 
-rem ===== 2. ÒÑ¾­ÔÚÅÜ¾ÍÖ±½Ó´ò¿ªÒ³Ãæ =====
+rem ===== 2. ï¿½Ñ¾ï¿½ï¿½ï¿½ï¿½Ü¾ï¿½Ö±ï¿½Ó´ï¿½Ò³ï¿½ï¿½ =====
 call :is_up
 if defined UP (
-  echo ·þÎñÒÑ¾­ÔÚÔËÐÐ£¬Ö±½Ó´ò¿ªÒ³Ãæ£º%URL%
+  echo ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð£ï¿½Ö±ï¿½Ó´ï¿½Ò³ï¿½æ£º%URL%
   if not "%GDV_NO_BROWSER%"=="1" start "" "%URL%"
   ping -n 4 127.0.0.1 >nul
   exit /b 0
 )
 
-rem ===== 3. Æô¶¯ =====
-echo ÕýÔÚÆô¶¯ Git Ìá½»±È¶Ô¹¤¾ß...
+rem ===== 3. ï¿½ï¿½ï¿½ï¿½ =====
+echo ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Git ï¿½á½»ï¿½È¶Ô¹ï¿½ï¿½ï¿½...
 start "git-diff-viewer" /min "%NODE_EXE%" "%~dp0server.js"
 
 set "WAIT=0"
@@ -42,21 +46,21 @@ call :is_up
 if defined UP goto ready
 if %WAIT% lss 8 goto waitloop
 echo.
-echo [´íÎó] Æô¶¯Ê§°Ü£º%PORT% ¶Ë¿ÚÃ»ÓÐÆðÀ´¡£
-echo Çë»¹Ô­×îÐ¡»¯µÄ "git-diff-viewer" ´°¿Ú£¬¿´ÀïÃæ±¨ÁËÊ²Ã´´í¡£
-echo ³£¼ûÔ­Òò£º¶Ë¿Ú±»ÆäËû³ÌÐòÕ¼ÓÃ¡¢node °æ±¾¹ýµÍ¡¢server.js ±»¸Ä¶¯¡£
+echo [ï¿½ï¿½ï¿½ï¿½] ï¿½ï¿½ï¿½ï¿½Ê§ï¿½Ü£ï¿½%PORT% ï¿½Ë¿ï¿½Ã»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+echo ï¿½ë»¹Ô­ï¿½ï¿½Ð¡ï¿½ï¿½ï¿½ï¿½ "git-diff-viewer" ï¿½ï¿½ï¿½Ú£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½æ±¨ï¿½ï¿½Ê²Ã´ï¿½ï¿½ï¿½ï¿½
+echo ï¿½ï¿½ï¿½ï¿½Ô­ï¿½ò£º¶Ë¿Ú±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õ¼ï¿½Ã¡ï¿½node ï¿½æ±¾ï¿½ï¿½ï¿½Í¡ï¿½server.js ï¿½ï¿½ï¿½Ä¶ï¿½ï¿½ï¿½
 pause
 exit /b 1
 
 :ready
 if not "%GDV_NO_BROWSER%"=="1" start "" "%URL%"
 echo.
-echo ÒÑ´ò¿ª %URL%
-echo ¹Ø±Õ "git-diff-viewer" ´°¿Ú¼´¿ÉÍ£Ö¹·þÎñ¡£
+echo ï¿½Ñ´ï¿½ %URL%
+echo ï¿½Ø±ï¿½ "git-diff-viewer" ï¿½ï¿½ï¿½Ú¼ï¿½ï¿½ï¿½Í£Ö¹ï¿½ï¿½ï¿½ï¿½
 ping -n 5 127.0.0.1 >nul
 exit /b 0
 
-rem ===== ¼ì²é 7391 ÊÇ·ñÓÐ½ø³ÌÔÚ LISTENING£¬½á¹ûÐ´½ø UP =====
+rem ===== ï¿½ï¿½ï¿½ 7391 ï¿½Ç·ï¿½ï¿½Ð½ï¿½ï¿½ï¿½ï¿½ï¿½ LISTENINGï¿½ï¿½ï¿½ï¿½ï¿½Ð´ï¿½ï¿½ UP =====
 :is_up
 set "UP="
 for /f "tokens=*" %%L in ('netstat -ano ^| findstr ":%PORT% " ^| findstr "LISTENING"') do set "UP=1"

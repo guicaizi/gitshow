@@ -1069,6 +1069,47 @@ function createAdb(opts) {
     };
   }
 
+  // prize add by yanliang for 设备截图页：窗口命令探测（严格白名单，只读）, 20261102-start
+  // 只允许下面这些命令，前端传 key 而不是命令行，避免变成任意 shell 入口
+  const PROBES = {
+    focus: { cmd: 'dumpsys window | grep -E "mCurrentFocus|mFocusedApp"', timeout: 12000 },
+    windows: { cmd: 'dumpsys window windows', timeout: 20000 },
+    displays: { cmd: 'dumpsys window displays', timeout: 15000 },
+    policy: { cmd: 'dumpsys window policy', timeout: 15000 },
+    animator: { cmd: 'dumpsys window animator', timeout: 15000 },
+    'sf-list': { cmd: 'dumpsys SurfaceFlinger --list', timeout: 15000 },
+    sf: { cmd: 'dumpsys SurfaceFlinger', timeout: 25000 },
+    activities: { cmd: 'dumpsys activity activities', timeout: 20000 },
+    top: { cmd: 'dumpsys activity top', timeout: 20000 },
+    display: { cmd: 'wm size; wm density', timeout: 12000 },
+    rotation: { cmd: 'settings get system user_rotation; dumpsys window displays | grep -m3 -i "rotation\\|cur="', timeout: 12000 },
+  };
+  const MAX_PROBE_BYTES = 512 * 1024;
+
+  async function probe(serialRaw, key) {
+    const def = PROBES[String(key || '')];
+    if (!def) throw new Error('不支持的命令：' + (key || '(空)'));
+    const serial = serialRaw ? safeSerial(serialRaw) : await firstOnlineSerial();
+    const at = Date.now();
+    const r = await run(['-s', serial, 'shell', def.cmd], def.timeout);
+    const ms = Date.now() - at;
+    let out = r.out || '';
+    const truncated = Buffer.byteLength(out, 'utf8') > MAX_PROBE_BYTES;
+    if (truncated) out = out.slice(0, MAX_PROBE_BYTES);
+    return {
+      ok: r.code === 0,
+      key,
+      cmd: def.cmd,
+      serial,
+      ms,
+      out,
+      err: (r.err || '').trim(),
+      truncated,
+      at,
+    };
+  }
+  // prize add by yanliang for 设备截图页：窗口命令探测（严格白名单，只读）, 20261102-end
+
   // 截图文件由浏览器直接 <img> 拉，走原始二进制而不是 JSON
   function sendShot(req, res, id) {
     if (!isLoopback(req)) {
@@ -1199,6 +1240,12 @@ function createAdb(opts) {
       case 'adb-layout':
         return dumpLayout((body.serial || q.get('serial') || '').trim());
       // prize add by yanliang for 设备截图页：抓屏 + 布局树, 20261029-end
+
+      // prize add by yanliang for 设备截图页：窗口命令探测, 20261102-start
+      case 'adb-probe':
+        if (ctx.req.method !== 'POST') throw new Error('该接口只接受 POST');
+        return probe((body.serial || q.get('serial') || '').trim(), body.key);
+      // prize add by yanliang for 设备截图页：窗口命令探测, 20261102-end
 
       default:
         throw new Error('未知接口');

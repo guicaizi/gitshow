@@ -25,6 +25,9 @@ const { createRefs } = require('./server-refs');
 // prize add by yanliang for 查找引用：反向查询也单独放一个文件, 20261027-end
 // prize add by yanliang for ADB 框架目录替换：设备探测与推送也单独放一个文件, 20261029-start
 const { createAdb } = require('./server-adb');
+// prize add by yanliang for 设备截图页：scrcpy 投屏窗口启停, 20261102-start
+const { createScrcpy } = require('./server-scrcpy');
+// prize add by yanliang for 设备截图页：scrcpy 投屏窗口启停, 20261102-end
 // prize add by yanliang for ADB 框架目录替换：设备探测与推送也单独放一个文件, 20261029-end
 
 // prize add by yanliang for 新增 git 可执行文件探测, 20261022-start
@@ -1323,6 +1326,9 @@ function isLoopbackRequest(req) {
 
 // prize add by yanliang for 顶栏 ADB 框架替换：探测设备 / 推送 framework 目录, 20261029-start
 const adbTool = createAdb({ rootDir: __dirname, isLoopback: isLoopbackRequest });
+// prize add by yanliang for 设备截图页：scrcpy 投屏窗口启停, 20261102-start
+const scrcpyTool = createScrcpy({ isLoopback: isLoopbackRequest });
+// prize add by yanliang for 设备截图页：scrcpy 投屏窗口启停, 20261102-end
 // prize add by yanliang for 顶栏 ADB 框架替换：探测设备 / 推送 framework 目录, 20261029-end
 
 async function revealInFileManager(repo, rawPath) {
@@ -1625,6 +1631,13 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 200, await adbTool.handle(action, { req, q, body }));
     }
     // prize add by yanliang for 顶栏 ADB 框架替换：状态 / 扫描 / 推送 / 日志, 20261029-end
+
+    // prize add by yanliang for 设备截图页：scrcpy 投屏窗口启停, 20261102-start
+    if (action.startsWith('scrcpy-')) {
+      const body = req.method === 'POST' ? await readJsonBody(req, 64 * 1024) : {};
+      return sendJson(res, 200, await scrcpyTool.handle(action, { req, q, body }));
+    }
+    // prize add by yanliang for 设备截图页：scrcpy 投屏窗口启停, 20261102-end
 
     const repo = await resolveRepo(q.get('repo'));
 
