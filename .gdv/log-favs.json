@@ -1,0 +1,92 @@
+{
+  "groups": [
+    {
+      "id": "g0",
+      "name": "未分类"
+    },
+    {
+      "id": "gmvz84yipglx",
+      "name": "窗口排查"
+    },
+    {
+      "id": "gmvz8npaxwan",
+      "name": "Systemui"
+    }
+  ],
+  "items": [
+    {
+      "id": "fmvz96kzj46l",
+      "name": "setFocusedWindow · ≥V",
+      "group": "gmvz84yipglx",
+      "filter": {
+        "levels": [
+          "V",
+          "D",
+          "I",
+          "W",
+          "E",
+          "F"
+        ],
+        "tag": "",
+        "kw": "setfocusedwindow",
+        "errOnly": false,
+        "buffers": [
+          "main",
+          "system",
+          "crash"
+        ],
+        "seed": 200
+      },
+      "at": 1793623602367
+    },
+    {
+      "id": "fmvz8nq7dywh",
+      "name": "CPPull",
+      "group": "gmvz8npaxwan",
+      "filter": {
+        "levels": [
+          "D",
+          "I",
+          "W",
+          "E",
+          "F"
+        ],
+        "tag": "",
+        "kw": "cppull",
+        "errOnly": false,
+        "buffers": [
+          "main",
+          "system",
+          "crash"
+        ],
+        "seed": 200
+      },
+      "at": 1793622722665
+    },
+    {
+      "id": "fmvz8d72a2h2",
+      "name": "Changing focus · ≥V",
+      "group": "gmvz84yipglx",
+      "filter": {
+        "levels": [
+          "V",
+          "D",
+          "I",
+          "W",
+          "E",
+          "F"
+        ],
+        "tag": "",
+        "kw": "changing focus",
+        "errOnly": false,
+        "buffers": [
+          "main",
+          "system",
+          "crash"
+        ],
+        "seed": 200
+      },
+      "at": 1793622231298
+    }
+  ]
+}
